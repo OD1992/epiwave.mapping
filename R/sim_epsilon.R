@@ -17,6 +17,7 @@ sim_epsilon <- function(template_rast,
                         theta_time = 0.9) {
 
   # fields' BCB setup
+  cells <- cells(template_rast)
   ext <- ext(template_rast)
   dims <- dim(template_rast)
   y_grid <- seq(ext[3], ext[4], length.out = dims[1])
@@ -45,7 +46,7 @@ sim_epsilon <- function(template_rast,
     Y[] <- rnorm(length(Y))
     # temporal correlation - can't work out why we need to divide by 30 to get
     # correct marginal variance, but apparently we do
-    sim <- (sigma / 30) * matern.image.cov(Y = Y, cov.obj = cov_setup)
+    sim <- (sigma / 30) * fields::matern.image.cov(Y = Y, cov.obj = cov_setup)
 
     # in the first time point, just use it as a raw value
     if (t == 1) {
