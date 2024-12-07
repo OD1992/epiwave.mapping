@@ -12,3 +12,8 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.2.3
 URL: https://github.com/idem-lab/epiwave.mapping
 BugReports: https://github.com/idem-lab/epiwave.mapping/issues
+Imports: 
+    dplyr,
+    fields,
+    magrittr,
+    tidyr

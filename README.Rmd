@@ -53,37 +53,38 @@ $$
 
 where weights $w_{l,h}$ give the 'membership' of the population in each pixel location to each health facility, such that $\sum_{h=1}^H w_{l,h} = 1$. In practice this could be either a proportional (fractions of the population attend different health facilities) or a discrete (the population of each pixel location attends only one nearby health facility) mapping.
 
-Within each pixel location, we model the unobserved clinical case count $\hat{C}_{l,t}$ from the modelled number of new infections $\hat{I}_{l,t'}$ at the same location, during previous time periods $t'$ to account for for non-negative integer delays ($t-t'$ up to maximum of $\tau_\pi$) from infection to diagnosis and reporting, and from the fraction of infections $\gamma_{l,t'}$ at that location and time that would result in a recorded clinical case:
+At each pixel location, we model the unobserved clinical case count $\hat{C}_{l,t}$ from the modelled number of new infections $\hat{I}_{l,t'}$ at the same location, during previous time periods $t'$, from the fraction of infections $\gamma_{l,t'}$ at that location and previous time period that would result in a recorded clinical case, and a probability distribution $\pi(t-t')$ over delays $t-t'$ from infection to diagnosis and reporting:
 
 $$
-\hat{C}_{l,t} = \sum_{t-t' = 0}^{\tau_\pi}{\gamma_{l,t'} \, \pi_1(t-t') \, \hat{I}_{l,t'}}
+\hat{C}_{l,t} = \sum_{t-t' = 0}^{\tau_\pi}{\hat{I}_{l,t'} \, \gamma_{l,t'} \, \pi(t-t')}
 $$
-
-where $\pi(\Delta_t)$ gives the discrete and finite (support on $\Delta_t \in (0, \tau_\pi)$) probability distribution over delays from infection to reporting, indexed on the time-periods considered in the model. This temporal reweighting to account for a distribution over possible delays can be considered as a 'discrete-time convolution' with $\pi(\Delta_t)$ the 'kernel'. Below we discuss efficient methods for computing these convolutions in greta.
+The distribution $\pi(\Delta_t)$ gives the discrete and finite (support on $\Delta_t \in (0, \tau_\pi)$) probability distribution over delays from infection to reporting, indexed on the time-periods considered in the model. This temporal reweighting to account for a distribution over possible delays can be considered as a 'discrete-time convolution' with $\pi(\Delta_t)$ the 'kernel'. Below we discuss efficient methods for computing these convolutions in greta.
 
 ### Infection prevalence model 
 
-We model the observed number of individuals who test positive for infection $N^+_{l,t}$ in an infection prevalence survey at location $l$ at time $t$ as a binomial sample, given the number of individuals tested $N_{l,t}$, and the modelled prevalence of infections $\hat{p}_{l,t}$ in the entire population at that time/place:
+We model the observed number of individuals who test positive for infection $N^+_{l,t}$ in an infection prevalence survey at location $l$ at time $t$ as a binomial sample, given the number of individuals tested $N_{l,t}$, and the modelled prevalence of infections $\hat{p}_{l,t}$ across the population at that time/place:
 
 $$
 N^+_{l,t} \sim \text{Binomial}(N_{l,t}, \hat{p}_{l,t})
 $$
-Similarly to clinical incidence, we model the infection prevalence at a given location and time as a discrete-time convolution over previous infection counts, divided by the total population in the pixel, $M_l$:
+Similarly to clinical incidence, we model the infection prevalence at a given location and time as a discrete-time convolution over previous infection counts, divided by the total population in the pixel $M_l$, and the duration of the time-period in days $d$:
 
 $$
-\hat{p}_{l,t} = \frac{1}{M_l}\sum_{t-t' = 0}^{\tau_q}{q(t-t')\hat{I}_{l,t'}}
+\hat{p}_{l,t} = \frac{1}{M_l}\sum_{t-t' = 0}^{\tau_q}{q(t-t') \, \hat{I}_{l,t'} \, d^{-1}}
 $$
 
-In this case, the kernel $q(\Delta_t)$ is not a probability distribution, but the proportion of individuals who would test positive to the diagnostic used in the survey in the $\Delta_t$ time period post-infection. This function can be estimated from empirical data on how the test sensitivity and duration of infection vary over time since infection. Convolution of the number of new infections in each previous time period with the fraction that would test positive in the the contemporary time period gives an estimate of the number of positive-testing people in the population at location $l$, at time $t$. Dividing this by $M_l$, the whole population of location $l$, yields an estimate of the population proportion testing positive - the parameter of the binomial distribution.
+In this case, the kernel $q(t-t')$ is not a probability distribution, but the kernel of a convolution operation that maps the daily average number of new infections in previous time periods $t'$ to the number of individuals who would test positive (to the diagnostic used) on a randomly-selected day in the timeperiod `t`. This kernel, which is specific to the tim eperiod chosen for modelling the temporal process, can be computed from a related function: $q_{\text{daily}}(\Delta_t)$ which gives the probability that an individual will test positive $\Delta_t$ days after infection. The integral of this function is the average number of days an infected person would test positive for. The function $q_{\text{daily}}()$ can be estimated from empirical data on how the test sensitivity and duration of infection vary over time since infection. This package provides functionality: `transform_convolution_kernel()` to construct timeperiod-specific kernels such as $q()$ from daily kernels like $q_{\text{daily}}()$ for an arbitrary modelling timeperiod.
 
-Note that our definition of $\hat{p}_{l,t}$ is as the population prevalence of infections *that would test positive using that diagnostic method* rather than the true fraction infected/infectious at any one time. We also assume here that tests have perfect specificity, though the model can easily be adapted to situations where that is not the case.
+By convolving of the number of new infections *per day* $\hat{I}_{l,t'} \, d^{-1}$ in all previous time periods with the fraction of those that would test positive in a survey in time period $t$, gives an estimate of the *number* of positive-testing people in the population at location $l$, on any given day within the time period $t$. Dividing this by the population of that location, $M_l$, therefore yields an estimate of the population proportion testing positive on any given day; the parameter of the binomial distribution that captures the prevalence survey data.
+
+Note that our definition of $\hat{p}_{l,t}$ is the population prevalence of infections *that would test positive using that diagnostic method* rather than the true fraction infected/infectious at any one time. We also assume here that tests have perfect specificity, though the model can easily be adapted to situations where that is not the case.
 
 ### Infection incidence model 
 
-The expected number of new infections $\hat{I}_{l,t'}$ in location $l$ during time period $t$ is modelled as the product of the population $M_l$ at that location, and the infection incidence $f_{l,t}$ at that location and time:
+The expected number of new infections $\hat{I}_{l,t'}$ in location $l$ during time period $t$ is modelled as the product of the population $M_l$ at that location, the length of the timeperiod in days $d$, and the daily infection incidence $f_{l,t}$ at that location and time:
 
 $$
-\hat{I}_{l,t'} = M_l \hat{f}_{l,t}
+\hat{I}_{l,t'} = d \, M_l \, \hat{f}_{l,t}
 $$
 
 Whilst we mechanistically model the observation processes yielding our data types, we employ a geostatistical approach to modelling spatio-temporal variation in infection incidence, with spatio-temporal covariates $\mathbf{X}_{l,t}$ and a space-time random effect $\epsilon_{l,t}$ with zero-mean Gaussian process prior:
@@ -122,4 +123,58 @@ An appealing alternative in this case is to compute the full spatial GP for ever
 
 ## Example application
 
-We demonstrate the model with application to mapping the infection incidence of malaria in ? In this case, we use clinical incidence data from ? and infection prevalence data from ?
+We demonstrate the model with application to mapping the (simulated) infection incidence of malaria in Kenya from simulated clinical incidence and infection prevalence data. Using the `sim_data()` function from this package, we use a real grid of environmental covariates, but simulate the locations of health facilities, prevalence survey locations, and all datasets to which we will then fit the model.
+
+First we load the bioclim covariates using the `terra` and `geodata` R package:
+```{r bioclim, eval = FALSE}
+library(terra)
+library(geodata)
+# download at a half-degree resolution. See ?geodata_path for how to save the data between sessions
+bioclim_kenya <- geodata::worldclim_country(
+  country = "KEN",
+  var = "bio",
+  res = 0.5,
+  path = file.path(tempdir(), "bioclim")
+)
+
+pop <- geodata::population(
+  year = 2020,
+  res = 0.5,
+  path = file.path(tempdir(), "population")
+)
+
+# crop and mask to Kenya
+pop_kenya <- mask(pop, bioclim_kenya)
+
+```
+
+```{r bioclim_secret, eval = TRUE, echo = FALSE}
+library(terra)
+library(geodata)
+# I'm on a plane writing this, so mocking up the chunk with a file I know I have
+source_bioc <- "../vector_atlas_training_2024/data/rasters/bc_kenya.tif"
+bioclim_kenya <- rast(source_bioc)
+source_pop <- "../ir_cube/data/clean/pop_cube.tif"
+
+kenya_mask <- bioclim_kenya[[1]]
+pop <- rast(source_pop)$pop_2020
+pop_kenya <- crop(pop, kenya_mask)
+disagg_factor <- 5
+pop_kenya <- terra::disagg(pop_kenya, disagg_factor) / (disagg_factor ^ 2)
+pop_kenya <- resample(pop_kenya, kenya_mask)
+pop_kenya <- mask(pop_kenya, kenya_mask)
+```
+
+Now we lower the spatial resolution. a little (to make the example run faster) and simulate some fake data, using the first 5 covariates
+```{r sim_data}
+bioclim_kenya <- terra::aggregate(bioclim_kenya, 10)
+pop_kenya <- terra::aggregate(pop_kenya, 10)
+
+library(epiwave.mapping)
+data <- sim_data(
+  covariates_rast = bioclim_kenya[[1:5]],
+  population_rast = pop_kenya, 
+  n_health_facilities = 15,
+  years = 2020:2024)
+
+```

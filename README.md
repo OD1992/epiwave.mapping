@@ -268,5 +268,26 @@ with a Markovian temporl kernel, this enables very rapid inference.
 ## Example application
 
 We demonstrate the model with application to mapping the infection
-incidence of malaria in ? In this case, we use clinical incidence data
-from ? and infection prevalence data from ?
+incidence of malaria in ? from simulated clinical incidence and
+infection prevalence data. Using the `sim_data()` function from this
+package, we use a real grid of environmental covariates, but simulate
+the locations of health facilities, prevalence survey locations, and all
+datasets to which we will then fit the model.
+
+First we load the bioclim covariates using the `terra` and `geodata` R
+package:
+
+``` r
+library(terra)
+library(geodata)
+# download at a half-degree resolution. See ?geodata_path for how to save the data between sessions
+bioclim_kenya <- geodata::worldclim_country(
+  country = "KEN",
+  var = "bio",
+  res = 0.5,
+  path = file.path(tempdir(), "bioclim")
+)
+```
+
+    #> Warning: package 'terra' was built under R version 4.2.3
+    #> terra 1.7.71
