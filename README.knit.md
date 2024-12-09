@@ -6,12 +6,7 @@ output:
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
-```{r, include = FALSE}
-knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>"
-)
-```
+
 
 # epiwave.mapping
 
@@ -25,7 +20,8 @@ Prototype R package and example code for computationall-yefficient, fully-Bayesi
 
 You can install the package from github, using the `remotes` package:
 
-```{r install, eval = FALSE}
+
+```r
 remotes::install_github("idem-lab/epiwave.mapping",
                         dependencies = TRUE)
 ```
@@ -128,7 +124,8 @@ An appealing alternative in this case is to compute the full spatial GP for ever
 We demonstrate the model with application to mapping the (simulated) infection incidence of malaria in Kenya from simulated clinical incidence and infection prevalence data. Using the `sim_data()` function from this package, we use a real grid of environmental covariates, but simulate the locations of health facilities, prevalence survey locations, and all datasets to which we will then fit the model.
 
 First we load the bioclim covariates using the `terra` and `geodata` R package:
-```{r bioclim, eval = FALSE}
+
+```r
 library(terra)
 library(geodata)
 # download at a half-degree resolution. See ?geodata_path for how to save the data between sessions
@@ -150,25 +147,15 @@ pop_kenya <- mask(pop, bioclim_kenya)
 
 ```
 
-```{r bioclim_secret, eval = TRUE, echo = FALSE}
-library(terra)
-library(geodata)
-# I'm on a plane writing this, so mocking up the chunk with a file I know I have
-source_bioc <- "../vector_atlas_training_2024/data/rasters/bc_kenya.tif"
-bioclim_kenya <- rast(source_bioc)
-source_pop <- "../ir_cube/data/clean/pop_cube.tif"
 
-kenya_mask <- bioclim_kenya[[1]]
-pop <- rast(source_pop)$pop_2020
-pop_kenya <- crop(pop, kenya_mask)
-disagg_factor <- 5
-pop_kenya <- terra::disagg(pop_kenya, disagg_factor) / (disagg_factor ^ 2)
-pop_kenya <- resample(pop_kenya, kenya_mask)
-pop_kenya <- mask(pop_kenya, kenya_mask)
+```
+#> Warning: package 'terra' was built under R version 4.2.3
+#> terra 1.7.71
 ```
 
 Now we lower the spatial resolution. a little (to make the example run faster) and simulate some fake data, using the first 5 covariates
-```{r sim_data}
+
+```r
 bioclim_kenya <- terra::aggregate(bioclim_kenya, 10)
 pop_kenya <- terra::aggregate(pop_kenya, 10)
 
@@ -180,5 +167,4 @@ data <- sim_data(
   years = 2020:2024,
   n_health_facilities = 100,
   n_prev_surveys = 30)
-
 ```
