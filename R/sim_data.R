@@ -1,113 +1,193 @@
-covariates_rast <- bioclim_kenya[[1:5]]
-population_rast <- pop_kenya
-n_health_facilities <- 100
-years <- 2020:2024
-n_prev_surveys <- 30
-n_times <- length(years) * 12
+#' .. content for \description{} (no empty lines) ..
+#'
+#' .. content for \details{} ..
+#'
+#' @title
+#' @param covariates_rast
+#' @param population_rast
+#' @param years
+#' @param n_health_facilities
+#' @param n_prev_surveys
+#' @return
+#' @author Nick Golding
+#' @export
 
-# length of a month in days
-month_length_days <- 365.25/12
+# Given a multi-layer SpatRaster 'covariates_rast' of temporally-static
+# covariate values, a single-layer SpatRaster of 'population_rast' of temporally
+# static population distribution, a vector of 'years' to consider, and the
+# number of health facilities ('n_health_facilities') and prevalence surveys
+# locations ('n_prev_surveys'), simulate health facilities, health-facility
+# level clinical case counts, and infection prevalence survey locations and
+# results, and return these along with the true parameters, latent quantities of
+# interest and parameters of the surveillance processes.
+sim_data <- function(covariates_rast,
+                     population_rast,
+                     years = 2020:2024,
+                     n_health_facilities = 100,
+                     n_prev_surveys = 30) {
 
-# simulate infection incidence data
-set.seed(1)
-alpha <- rnorm(1, log(1e-4), 1)
-beta <- rnorm(nlyr(covariates_rast))
-gamma <- rbeta(1, 5, 10)
-epsilon <- sim_epsilon(template_rast = population_rast,
-                       n_times = n_times)
+  # use a monthly timestep, so create times for these years
+  n_times <- length(years) * 12
 
-# scale the covariates
-covariates_rast_scaled <- scale(covariates_rast)
+  # length of a month in days
+  month_length_days <- 365.25/12
 
-# create some fixed effects raster part
-fixef <- alpha + sum(covariates_rast_scaled * beta)
+  # random parameters
+  alpha <- rnorm(1, log(1e-4), 1)
+  beta <- rnorm(terra::nlyr(covariates_rast))
+  gamma <- rbeta(1, 5, 10)
+  sigma <- rbeta(1, 12, 8)
+  phi <- rbeta(1, 16, 4)
+  theta <- rbeta(1, 18, 2)
 
-# create eta
-eta <- fixef + epsilon
+  # simulate infection incidence data
+  epsilon <- sim_epsilon(template_rast = population_rast,
+                         n_times = n_times,
+                         sigma = sigma,
+                         phi_space = phi,
+                         theta_time = theta)
 
-# get the infection incidence
-infection_incidence_daily <- exp(eta)
-# create raster of number of new infections per timeperiod/pixel
-new_infections <- month_length_days * population_rast * infection_incidence_daily
-names(new_infections) <- names(epsilon)
+  # scale the covariates
+  covariates_rast_scaled <- terra::scale(covariates_rast)
 
-# simulate infection prevalence on rasters
+  # create the fixed effects part as a raster
+  fixef <- alpha + sum(covariates_rast_scaled * beta)
 
-# given a function of test positivity over time since infection (days), convert
-# this into the convolution function q, for months
+  # get linear predictor and transform to daily infection incidence rate
+  eta <- fixef + epsilon
+  infection_incidence_daily <- exp(eta)
 
-# for each day post-infection this is the (entirely fake) probability of testing
-# positive on our hypothetical test, if tested that day. Hard-coded to be 0 for
-# negative times or beyond 30 days
-max_infection_detectability <- 30
-q_daily <- function(days) {
-  up <- plogis((days * 2) - 5)
-  down <- 1 - plogis(days / 2 - 10)
-  q <- up  * down
-  q[days < 0] <- 0
-  q[days > 30] <- 0
-  q
-}
+  # create raster of number of new infections per timeperiod/pixel
+  new_infections <- month_length_days * population_rast * infection_incidence_daily
+  names(new_infections) <- names(epsilon)
 
-# transform to a monthly timestep
-q <- transform_convolution_kernel(kernel_daily = q_daily,
-                                  max_diff_days = max_infection_detectability,
-                                  timeperiod_days = month_length_days)
+  # simulate infection prevalence on rasters
 
-# do convolution of rasters, and apply the rest of the maths
-new_infections_daily <- new_infections / month_length_days
-detectable_infections_daily <- convolve_rasters(rast = new_infections_daily,
-                                                kernel = q)
-prevalence <- detectable_infections_daily / population_rast
+  # given a function of test positivity over time since infection (days), convert
+  # this into the convolution function q, for months
 
-# now do the same for the pixel map of clinical case counts
-pi_daily <- function(day_difference) {
-  # use a truncated lognormal (truncated 0-14)
-  mu <- 1.2
-  sigma <- 0.5
-  upper_limit <- 14
-  day_difference_old <- day_difference
-  day_difference <- round(day_difference)
-  if (!max(abs(day_difference - day_difference_old) < 1e-4)) {
-    warning("day_difference was non-integer, using rounded values")
+  # for each day post-infection this is the (entirely fake) probability of testing
+  # positive on our hypothetical test, if tested that day. Hard-coded to be 0 for
+  # negative times or beyond 30 days
+  max_infection_detectability <- 30
+  q_daily <- function(days) {
+    up <- plogis((days * 2) - 5)
+    down <- 1 - plogis(days / 2 - 10)
+    q <- up  * down
+    q[days < 0] <- 0
+    q[days > 30] <- 0
+    q
   }
 
-  upper <- plnorm(day_difference + 1, mu, sigma)
-  lower <- plnorm(day_difference, mu, sigma)
-  dens <- upper - lower
+  max_case_delay <- 14
 
-  # correct the densities
-  norm <- plnorm(upper_limit, mu, sigma)
-  res <- dens / norm
-  res[day_difference > upper_limit] <- 0
-  res[day_difference < 0] <- 0
-  res
+  # now do the same for the pixel map of clinical case counts
+  pi_daily <- function(day_difference) {
+    upper_limit <- max_case_delay
+    # use a truncated lognormal (truncated to 0-upper_limit)
+    mu <- 1.2
+    sigma <- 0.5
+    day_difference_old <- day_difference
+    day_difference <- round(day_difference)
+    if (!max(abs(day_difference - day_difference_old) < 1e-4)) {
+      warning("day_difference was non-integer, using rounded values")
+    }
+
+    upper <- plnorm(day_difference + 1, mu, sigma)
+    lower <- plnorm(day_difference, mu, sigma)
+    dens <- upper - lower
+
+    # correct the densities
+    norm <- plnorm(upper_limit, mu, sigma)
+    res <- dens / norm
+    res[day_difference > upper_limit] <- 0
+    res[day_difference < 0] <- 0
+    res
+  }
+
+  # transform to a monthly timestep
+  q <- transform_convolution_kernel(kernel_daily = q_daily,
+                                    max_diff_days = max_infection_detectability,
+                                    timeperiod_days = month_length_days)
+
+  # do convolution of rasters, and apply the rest of the maths
+  new_infections_daily <- new_infections / month_length_days
+  detectable_infections_daily <- convolve_rasters(rast = new_infections_daily,
+                                                  kernel = q)
+  prevalence <- detectable_infections_daily / population_rast
+  names(prevalence) <- names(epsilon)
+
+  # transform delay probability distribution to discrete timeperiods
+  pi <- transform_convolution_kernel(kernel_daily = pi_daily,
+                                     max_diff_days = max_case_delay,
+                                     timeperiod_days = month_length_days)
+
+  # convolve the incidence, and multiply by the probability of reporting
+  reporting_convolved_infections_pixel <- convolve_rasters(rast = new_infections,
+                                                           kernel = pi)
+  clinical_cases_pixel <- reporting_convolved_infections_pixel * gamma
+  names(clinical_cases_pixel) <- names(epsilon)
+
+  # simulate data collection
+  prevalence_surveys <- sim_prev_surveys(one_prevalence_rast = prevalence[[16]],
+                                         population_rast = population_rast,
+                                         n_surveys = n_prev_surveys,
+                                         n_samples = 1000)
+
+  # simulate some health facilities at which to observe case counts
+  health_facilities <- sim_health_facilities(
+    population_rast = population_rast,
+    n_health_facilities = n_health_facilities)
+
+  # aggregate expected case counts by these facilities and simulate case data
+  clinical_cases <- sim_clinical_cases(
+    clinical_cases_rast = clinical_cases_pixel,
+    health_facilities = health_facilities)
+
+  # return all these objects as a structured list
+  list(
+    epi_data = list(
+      # prevalence survey data and locations
+      prevalence_surveys = prevalence_surveys,
+      # clinical case counts
+      clinical_cases = clinical_cases
+    ),
+    surveillance_information = list(
+      # health facility locations and catchment probabilities
+      health_facilities = health_facilities,
+      # daily probability of positive result in prevalence diagnostic
+      prev_detectability_daily_fun = q,
+      # maximum detectability in days
+      prev_detectability_max_days =  max_infection_detectability,
+      # probability mass function of case reporting delay distribution in days
+      case_delay_distribution_daily_fun = pi,
+      # maximum delay in case reporting in days
+      case_delay_max_days = max_case_delay
+    ),
+    # objects contianing the truth
+    truth = list(
+      # model fixed hyperparameters
+      parameters = list(
+        alpha = alpha,
+        beta = beta,
+        gamma = gamma,
+        sigma = sigma,
+        phi = phi,
+        theta = theta
+      ),
+      rasters = list(
+        # space-time random effect, as a raster
+        epsilon_rast = epsilon,
+        # unobserved quantities, as rasters
+        # daily incidence rate of new infections
+        infection_incidence_rast = infection_incidence_daily,
+        # population prevalence of infection
+        prevalence_rast = prevalence,
+        # number of clinical cases per timeperiod
+        clinical_cases_rast = clinical_cases_pixel
+      )
+    )
+  )
+
 }
 
-# now make this work as a convolution on the discrete timeperiods
-pi <- transform_convolution_kernel(kernel_daily = pi_daily,
-                                   max_diff_days = 14,
-                                   timeperiod_days = month_length_days)
-
-# convolve the incidence, and multiply by the probability of reporting
-reporting_convolved_infections_pixel <- convolve_rasters(rast = new_infections,
-                                                        kernel = pi)
-clinical_cases_pixel <- reporting_convolved_infections_pixel * gamma
-
-prev_surveys <- sim_prev_surveys(one_prevalence_rast = prevalence[[16]],
-                                 population_rast = population_rast,
-                                 n_surveys = 30,
-                                 n_samples = 1000)
-
-
-
-# simulate some health facilities
-health_facilities <- sim_health_facilities(
-  population_rast = population_rast,
-  n_health_facilities = n_health_facilities)
-
-plot(population_rast)
-points(prev_survey_locs)
-
-plot(population_rast)
-points(health_facilities$health_facility_loc)

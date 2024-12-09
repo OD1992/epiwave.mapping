@@ -14,7 +14,7 @@ sim_clusters <- function(population_rast = population_rast,
 
   pts <- terra::spatSample(
     population_rast ^ 2,
-    size = 1e4,
+    size = n_initial,
     method = "weights",
     replace = TRUE,
     na.rm = TRUE,
@@ -23,7 +23,6 @@ sim_clusters <- function(population_rast = population_rast,
   )
 
   # simulate cluster locations with k-means
-  kmn <- kmeans(pts,
-                centers = n)
+  kmn <- kmeans(pts, centers = n)
   kmn$centers
 }

@@ -21,7 +21,7 @@ convolve_rasters <- function(rast, kernel, diffs = NULL) {
 
   # maybe use user-provided diff levels
   if (is.null(diffs)) {
-    e <- environment(q)
+    e <- environment(kernel)
     diffs <- e$table$timeperiod_diff
   }
 
@@ -41,7 +41,7 @@ convolve_rasters <- function(rast, kernel, diffs = NULL) {
   for (i in seq_len(n_diffs)) {
     # compute the weight
     diff <- diffs[i]
-    weight <- q(diff)
+    weight <- kernel(diff)
 
     # maybe pad the start of the timeseries
     if (diff > 0) {

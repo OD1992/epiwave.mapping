@@ -31,40 +31,40 @@ transform_convolution_kernel <- function(kernel_daily, max_diff_days, timeperiod
 
   # compute the fractions of q for each timeperiod difference
 
-  table <- expand_grid(
+  table <- tidyr::expand_grid(
     infection_day = seq_len(max_timeperiods * timeperiod_days),
     test_day = seq_len(timeperiod_days)
   ) %>%
-    mutate(
+    dplyr::mutate(
       day_diff = infection_day - test_day
     ) %>%
-    filter(
+    dplyr::filter(
       day_diff >= 0
     ) %>%
-    mutate(
+    dplyr::mutate(
       kernel_val_day = kernel_daily(day_diff),
       timeperiod_diff = (infection_day - 1) %/% timeperiod_days
     ) %>%
-    group_by(
+    dplyr::group_by(
       test_day,
       timeperiod_diff
     ) %>%
-    summarise(
+    dplyr::summarise(
       partial_integral = sum(kernel_val_day),
       .groups = "drop"
     ) %>%
-    mutate(
+    dplyr::mutate(
       fraction = partial_integral / total_integral
     ) %>%
-    group_by(timeperiod_diff) %>%
-    summarise(
+    dplyr::group_by(timeperiod_diff) %>%
+    dplyr::summarise(
       fraction = mean(fraction),
       .groups = "drop"
     ) %>%
-    mutate(
+    dplyr::mutate(
       kernel_val = fraction * total_integral
     ) %>%
-    select(-fraction)
+    dplyr::select(-fraction)
 
   # return the discrete kernel on the new timeperiod
   function(time_period_difference) {

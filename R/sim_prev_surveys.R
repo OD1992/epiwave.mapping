@@ -26,15 +26,15 @@ sim_prev_surveys <- function(one_prevalence_rast,
   # look up the prevalences
   prevs <- terra::extract(one_prevalence_rast, prev_survey_locs)[, 1]
 
-  # simulate the data
+  # simulate the prevalence survey data
   dplyr::tibble(
     n_sampled = rep(n_samples, n_surveys),
     n_positive = rbinom(n_surveys, size = n_sampled, prob = prevs)
   ) %>%
-    bind_cols(
+    dplyr::bind_cols(
       prev_survey_locs
-    )
-  # extract the prevalences
+    ) %>%
+    as.data.frame()
 
 }
 

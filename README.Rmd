@@ -171,10 +171,12 @@ bioclim_kenya <- terra::aggregate(bioclim_kenya, 10)
 pop_kenya <- terra::aggregate(pop_kenya, 10)
 
 library(epiwave.mapping)
+set.seed(1)
 data <- sim_data(
   covariates_rast = bioclim_kenya[[1:5]],
   population_rast = pop_kenya, 
-  n_health_facilities = 15,
-  years = 2020:2024)
+  years = 2020:2024,
+  n_health_facilities = 100,
+  n_prev_surveys = 30)
 
 ```

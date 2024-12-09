@@ -17,8 +17,8 @@ sim_epsilon <- function(template_rast,
                         theta_time = 0.9) {
 
   # fields' BCB setup
-  cells <- cells(template_rast)
-  ext <- ext(template_rast)
+  cells <- terra::cells(template_rast)
+  ext <- terra::ext(template_rast)
   dims <- dim(template_rast)
   y_grid <- seq(ext[3], ext[4], length.out = dims[1])
   x_grid <- seq(ext[1], ext[2], length.out = dims[2])
