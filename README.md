@@ -59,8 +59,9 @@ employing a block-circulant embedding for the spatial process. This is
 similar to the approach used in the `lgcp` R package, and detailed in
 Diggle et al. (2013). We note that the clinical incidence observation
 model we employ is a particular case of a Log-Gaussian Cox process. Our
-contribution is linking this to prevalence survey data in a practical
-and easily-extensible way.
+contribution is accounting for delays in reporting, and linking model
+this to prevalence survey data, in a practical and easily-extensible
+framework.
 
 ### Clinical incidence model
 
@@ -73,7 +74,7 @@ random variable:
 
 ![C\_{h,t} \sim \text{Poisson}(\hat{C}\_{h,t})](https://latex.codecogs.com/png.latex?C_%7Bh%2Ct%7D%20%5Csim%20%5Ctext%7BPoisson%7D%28%5Chat%7BC%7D_%7Bh%2Ct%7D%29 "C_{h,t} \sim \text{Poisson}(\hat{C}_{h,t})")
 
-The expectation of this poisson random variable (the modelled/expected
+The expectation of this Poisson random variable (the modelled/expected
 number of clinical cases) is given by a weighted sum of (unobserved but
 modelled) expected pixel-level clinical case counts
 ![\hat{C}\_{l,t}](https://latex.codecogs.com/png.latex?%5Chat%7BC%7D_%7Bl%2Ct%7D "\hat{C}_{l,t}")
@@ -85,8 +86,12 @@ locations ![l](https://latex.codecogs.com/png.latex?l "l"):
 where weights
 ![w\_{l,h}](https://latex.codecogs.com/png.latex?w_%7Bl%2Ch%7D "w_{l,h}")
 give the ‘membership’ of the population in each pixel location to each
-health facility, such that
-![\sum\_{h=1}^H w\_{l,h} = 1](https://latex.codecogs.com/png.latex?%5Csum_%7Bh%3D1%7D%5EH%20w_%7Bl%2Ch%7D%20%3D%201 "\sum_{h=1}^H w_{l,h} = 1").
+health facility, where each case at a given location
+![l](https://latex.codecogs.com/png.latex?l "l") has probability
+![w\_{l,h}](https://latex.codecogs.com/png.latex?w_%7Bl%2Ch%7D "w_{l,h}")
+of reporting at health facility
+![h](https://latex.codecogs.com/png.latex?h "h"), and therefore
+![\sum\_{l=1}^L w\_{l,h} = 1](https://latex.codecogs.com/png.latex?%5Csum_%7Bl%3D1%7D%5EL%20w_%7Bl%2Ch%7D%20%3D%201 "\sum_{l=1}^L w_{l,h} = 1").
 In practice this could be either a proportional (fractions of the
 population attend different health facilities) or a discrete (the
 population of each pixel location attends only one nearby health
@@ -217,9 +222,9 @@ and a space-time random effect
 ![\epsilon\_{l,t}](https://latex.codecogs.com/png.latex?%5Cepsilon_%7Bl%2Ct%7D "\epsilon_{l,t}")
 with zero-mean Gaussian process prior:
 
-![\text{log}(f\_{l,t}) = \alpha +\mathbf{X}\_{l,t} \beta + \epsilon\_{l,t} \\
-\epsilon \sim GP(0, \mathbf{K})](https://latex.codecogs.com/png.latex?%5Ctext%7Blog%7D%28f_%7Bl%2Ct%7D%29%20%3D%20%5Calpha%20%2B%5Cmathbf%7BX%7D_%7Bl%2Ct%7D%20%5Cbeta%20%2B%20%5Cepsilon_%7Bl%2Ct%7D%20%5C%5C%0A%5Cepsilon%20%5Csim%20GP%280%2C%20%5Cmathbf%7BK%7D%29 "\text{log}(f_{l,t}) = \alpha +\mathbf{X}_{l,t} \beta + \epsilon_{l,t} \\
-\epsilon \sim GP(0, \mathbf{K})")
+![\text{log}(f\_{l,t}) = \alpha +\mathbf{X}\_{l,t} \beta + \epsilon\_{l,t}](https://latex.codecogs.com/png.latex?%5Ctext%7Blog%7D%28f_%7Bl%2Ct%7D%29%20%3D%20%5Calpha%20%2B%5Cmathbf%7BX%7D_%7Bl%2Ct%7D%20%5Cbeta%20%2B%20%5Cepsilon_%7Bl%2Ct%7D "\text{log}(f_{l,t}) = \alpha +\mathbf{X}_{l,t} \beta + \epsilon_{l,t}")
+
+![\epsilon \sim GP(0, \mathbf{K})](https://latex.codecogs.com/png.latex?%5Cepsilon%20%5Csim%20GP%280%2C%20%5Cmathbf%7BK%7D%29 "\epsilon \sim GP(0, \mathbf{K})")
 
 where ![\alpha](https://latex.codecogs.com/png.latex?%5Calpha "\alpha")
 is a scalar intercept term,

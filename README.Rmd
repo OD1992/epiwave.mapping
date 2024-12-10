@@ -38,7 +38,7 @@ Our main aim is to model, and generate spatio-temporal predictive maps of, varia
 
 - **Infection prevalence survey points**: Random samples of individuals at a specific point location, with the number tested and number positive recorded. Typically these data are available only very infrequently.
 
-Since neither datastream provides a direct estimate of infection incidence, we model the generative observation process yielding each datastream, using informative priors for key parameters wherever possible. A number of options are available for computationally-efficient space-time Gaussian process (GP) modelling for applications of this type. Below we implement an approach well-suited to our health facility catchment observation model and fully Bayesian inference using Hamiltonian Monte Carlo: a separable space-time GP employing a block-circulant embedding for the spatial process. This is similar to the approach used in the `lgcp` R package, and detailed in Diggle et al. (2013). We note that the clinical incidence observation model we employ is a particular case of a Log-Gaussian Cox process. Our contribution is linking this to prevalence survey data in a practical and easily-extensible way.
+Since neither datastream provides a direct estimate of infection incidence, we model the generative observation process yielding each datastream, using informative priors for key parameters wherever possible. A number of options are available for computationally-efficient space-time Gaussian process (GP) modelling for applications of this type. Below we implement an approach well-suited to our health facility catchment observation model and fully Bayesian inference using Hamiltonian Monte Carlo: a separable space-time GP employing a block-circulant embedding for the spatial process. This is similar to the approach used in the `lgcp` R package, and detailed in Diggle et al. (2013). We note that the clinical incidence observation model we employ is a particular case of a Log-Gaussian Cox process. Our contribution is accounting for delays in reporting, and linking model this to prevalence survey data, in a practical and easily-extensible framework.
 
 ### Clinical incidence model 
 
@@ -47,13 +47,13 @@ We model the observed number of clinical cases $C_{h,t}$ of our disease of inter
 $$
 C_{h,t} \sim \text{Poisson}(\hat{C}_{h,t})
 $$
-The expectation of this poisson random variable (the modelled/expected number of clinical cases) is given by a weighted sum of (unobserved but modelled) expected pixel-level clinical case counts $\hat{C}_{l,t}$ at each of $L$ pixel locations $l$:
+The expectation of this Poisson random variable (the modelled/expected number of clinical cases) is given by a weighted sum of (unobserved but modelled) expected pixel-level clinical case counts $\hat{C}_{l,t}$ at each of $L$ pixel locations $l$:
 
 $$
 \hat{C}_{h,t} = \sum_{l=1}^{L}{\hat{C}_{l,t}w_{l,h}}
 $$
 
-where weights $w_{l,h}$ give the 'membership' of the population in each pixel location to each health facility, such that $\sum_{h=1}^H w_{l,h} = 1$. In practice this could be either a proportional (fractions of the population attend different health facilities) or a discrete (the population of each pixel location attends only one nearby health facility) mapping.
+where weights $w_{l,h}$ give the 'membership' of the population in each pixel location to each health facility, where each case at a given location $l$ has probability $w_{l,h}$ of reporting at health facility $h$, and therefore $\sum_{l=1}^L w_{l,h} = 1$. In practice this could be either a proportional (fractions of the population attend different health facilities) or a discrete (the population of each pixel location attends only one nearby health facility) mapping.
 
 At each pixel location, we model the unobserved clinical case count $\hat{C}_{l,t}$ from the modelled number of new infections $\hat{I}_{l,t'}$ at the same location, during previous time periods $t'$, from the fraction of infections $\gamma_{l,t'}$ at that location and previous time period that would result in a recorded clinical case, and a probability distribution $\pi(t-t')$ over delays $t-t'$ from infection to diagnosis and reporting:
 
@@ -92,7 +92,10 @@ $$
 Whilst we mechanistically model the observation processes yielding our data types, we employ a geostatistical approach to modelling spatio-temporal variation in infection incidence, with spatio-temporal covariates $\mathbf{X}_{l,t}$ and a space-time random effect $\epsilon_{l,t}$ with zero-mean Gaussian process prior:
 
 $$
-\text{log}(f_{l,t}) = \alpha +\mathbf{X}_{l,t} \beta + \epsilon_{l,t} \\
+\text{log}(f_{l,t}) = \alpha +\mathbf{X}_{l,t} \beta + \epsilon_{l,t}
+$$
+
+$$
 \epsilon \sim GP(0, \mathbf{K})
 $$
 
