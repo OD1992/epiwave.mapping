@@ -217,7 +217,8 @@ ggplot() +
   ) +
   xlab("") +
   ylab("") +
-  theme_minimal()
+  theme_minimal() +
+  ggtitle("Health facility locations")
 ```
 
 Plot the clinical case timeseries for all health facilities over each year:
@@ -248,7 +249,8 @@ ggplot(
   scale_colour_discrete(
     guide = "none"
   ) +
-  scale_x_continuous(breaks = 1:12)
+  scale_x_continuous(breaks = 1:12) +
+  ggtitle("Clinical case timeseries")
 ```
 
 Plot the prevalence survey results at the prevalence survey locations:
@@ -283,7 +285,8 @@ ggplot() +
   ) +
   xlab("") +
   ylab("") +
-  theme_minimal()
+  theme_minimal() +
+  ggtitle("Prevalence surveys")
 
 ```
 

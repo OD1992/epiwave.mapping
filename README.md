@@ -438,7 +438,8 @@ ggplot() +
   ) +
   xlab("") +
   ylab("") +
-  theme_minimal()
+  theme_minimal() +
+  ggtitle("Health facility locations")
 ```
 
 ![](README_files/figure-gfm/vis_data_1-1.png)<!-- -->
@@ -472,7 +473,8 @@ ggplot(
   scale_colour_discrete(
     guide = "none"
   ) +
-  scale_x_continuous(breaks = 1:12)
+  scale_x_continuous(breaks = 1:12) +
+  ggtitle("Clinical case timeseries")
 #> Warning: Removed 43 rows containing missing values or values outside the scale range
 #> (`geom_line()`).
 ```
@@ -511,7 +513,8 @@ ggplot() +
   ) +
   xlab("") +
   ylab("") +
-  theme_minimal()
+  theme_minimal() +
+  ggtitle("Prevalence surveys")
 ```
 
 ![](README_files/figure-gfm/vis_data_3-1.png)<!-- -->
