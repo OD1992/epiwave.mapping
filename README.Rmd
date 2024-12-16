@@ -378,3 +378,23 @@ ggplot(
   ggtitle("Prevalence survey detectability function",
           "Probability of registering a positive if tested X days after infection")
 ```
+
+Plot the assumed infection prevalence - clinical case incidence relationship:
+
+```{r vis_data_6}
+prev_inc_plot <- tibble(prevalence = seq(0, 0.5, length.out = 100)) %>%
+  mutate(
+    clinical_incidence = data$surveillance_information$prev_inc_function
+(prevalence)
+  )
+
+ggplot(
+  aes(x = prevalence,
+      y = 365 * clinical_incidence),
+  data = prev_inc_plot) +
+  geom_line() +
+  theme_minimal() +
+  xlab("Prevalence") +
+  ylab("Clinical incidence (annual)") +
+  ggtitle("Prevalence - clinical incidence function")
+```

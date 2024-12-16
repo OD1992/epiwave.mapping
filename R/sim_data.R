@@ -43,7 +43,7 @@ sim_data <- function(covariates_rast,
   # random parameters
   alpha <- rnorm(1, log(1e-4), 1)
   beta <- rnorm(terra::nlyr(covariates_rast))
-  gamma <- rbeta(1, 5, 10)
+  r <- rbeta(1, 10, 5)
   sigma <- rbeta(1, 12, 8)
   phi <- rbeta(1, 16, 4)
   theta <- rbeta(1, 18, 2)
@@ -118,6 +118,17 @@ sim_data <- function(covariates_rast,
                                     max_diff_days = max_infection_detectability,
                                     timeperiod_days = month_length_days)
 
+  # create a function g for the prevalence-incidence relationship
+  g <- function(prevalence) {
+    (1/365) * (1 - exp(-prevalence * 10))
+  }
+
+  # infections to reported clinical cases, as a function of infection incidence
+  q_star <- sum(q_daily(seq(0, max_infection_detectability)))
+  compute_gamma <- function(infection_incidence_daily) {
+    r * g(q_star * infection_incidence_daily) / infection_incidence_daily
+  }
+
   # do convolution of rasters, and apply the rest of the maths
   new_infections_daily <- new_infections / month_length_days
   detectable_infections_daily <- convolve_rasters(rast = new_infections_daily,
@@ -130,11 +141,17 @@ sim_data <- function(covariates_rast,
                                      max_diff_days = max_case_delay,
                                      timeperiod_days = month_length_days)
 
-  # convolve the incidence, and multiply by the probability of reporting
-  reporting_convolved_infections_pixel <- convolve_rasters(rast = new_infections,
+  # compute the number of new clinical cases by infection date convolve the
+  # incidence, and multiply by the probability of reporting
+  gamma_rast <- compute_gamma(infection_incidence_daily)
+  new_clinical_cases <- gamma_rast * new_infections
+  reported_clinical_cases_pixel <- convolve_rasters(rast = new_clinical_cases,
                                                            kernel = pi)
-  clinical_cases_pixel <- reporting_convolved_infections_pixel * gamma
-  names(clinical_cases_pixel) <- names(epsilon)
+  names(reported_clinical_cases_pixel) <- names(epsilon)
+
+  # back out the true number of clinical cases (since reporting rate r is
+  # wrapped into gamma)
+  clinical_cases_pixel <- reported_clinical_cases_pixel / r
 
   # simulate data collection
 
@@ -158,7 +175,7 @@ sim_data <- function(covariates_rast,
 
   # aggregate expected case counts by these facilities and simulate case data
   clinical_cases <- sim_clinical_cases(
-    clinical_cases_rast = clinical_cases_pixel,
+    clinical_cases_rast = reported_clinical_cases_pixel,
     health_facilities = health_facilities,
     missingness = case_missingness)
 
@@ -180,7 +197,9 @@ sim_data <- function(covariates_rast,
       # probability mass function of case reporting delay distribution in days
       case_delay_distribution_daily_fun = pi_daily,
       # maximum delay in case reporting in days
-      case_delay_max_days = max_case_delay
+      case_delay_max_days = max_case_delay,
+      # clinical incidence as a function of prevalence
+      prev_inc_function = g
     ),
     # objects contianing the truth
     truth = list(

@@ -625,7 +625,7 @@ ggplot(
   ) +
   scale_x_continuous(breaks = 1:12) +
   ggtitle("Clinical case timeseries")
-#> Warning: Removed 43 rows containing missing values or values outside the scale range
+#> Warning: Removed 39 rows containing missing values or values outside the scale range
 #> (`geom_line()`).
 ```
 
@@ -711,3 +711,26 @@ ggplot(
 ```
 
 ![](README_files/figure-gfm/vis_data_5-1.png)<!-- -->
+
+Plot the assumed infection prevalence - clinical case incidence
+relationship:
+
+``` r
+prev_inc_plot <- tibble(prevalence = seq(0, 0.5, length.out = 100)) %>%
+  mutate(
+    clinical_incidence = data$surveillance_information$prev_inc_function
+(prevalence)
+  )
+
+ggplot(
+  aes(x = prevalence,
+      y = 365 * clinical_incidence),
+  data = prev_inc_plot) +
+  geom_line() +
+  theme_minimal() +
+  xlab("Prevalence") +
+  ylab("Clinical incidence (annual)") +
+  ggtitle("Prevalence - clinical incidence function")
+```
+
+![](README_files/figure-gfm/vis_data_6-1.png)<!-- -->
