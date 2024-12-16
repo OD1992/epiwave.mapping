@@ -1,4 +1,18 @@
 
+- [epiwave.mapping](#epiwavemapping)
+  - [Installation](#installation)
+  - [Model](#model)
+    - [Clinical incidence model](#clinical-incidence-model)
+    - [Infection prevalence model](#infection-prevalence-model)
+    - [Infection incidence model](#infection-incidence-model)
+    - [Infection prevalence - clinical incidence
+      relationship](#infection-prevalence---clinical-incidence-relationship)
+  - [Computational approaches](#computational-approaches)
+    - [Inference](#inference)
+    - [Discrete-time convolution](#discrete-time-convolution)
+    - [Gaussian process simulation](#gaussian-process-simulation)
+  - [Example application](#example-application)
+
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
 # epiwave.mapping
@@ -261,6 +275,142 @@ with parameter
 controlling the range of temporal correlation. Again for computational
 reasons, we prefer Markovian kernels for
 ![K\_{\text{time}}](https://latex.codecogs.com/png.latex?K_%7B%5Ctext%7Btime%7D%7D "K_{\text{time}}").
+
+### Infection prevalence - clinical incidence relationship
+
+As described above, the spatially- and temporally-varying parameter
+![\gamma\_{l,t}](https://latex.codecogs.com/png.latex?%5Cgamma_%7Bl%2Ct%7D "\gamma_{l,t}")
+gives the fraction of new infections that would result in a recorded
+clinical case. In the absence of additional data to that described
+above, it is unlikely that spatio-temporal variation in this parameter
+can be inferred. For some diseases - e.g. those where previous
+infections confer little immune protection from symptoms of future
+infections - it may be sufficient to model this as a constant, in which
+case it can be inferred statistically. However for many diseases, there
+is likely to be a non-linear relationship between the infection
+incidence in a given population, and the fraction of those infections
+that result in a clinical case. Where repeat infections decrease the
+clinical severity of subsequent infections,
+![\gamma\_{l,t}](https://latex.codecogs.com/png.latex?%5Cgamma_%7Bl%2Ct%7D "\gamma_{l,t}")
+is likely to manifest as a monotone decreasing function of infection
+incidence
+![f\_{l,t}](https://latex.codecogs.com/png.latex?f_%7Bl%2Ct%7D "f_{l,t}").
+In this scenario, it would be preferable to account for this
+relationship using external information. In the case of malaria, this
+relationship is often explored using empirical data in terms of the
+relationship between infection prevalence and clinical incidence. Where
+a previously-estimated relationship between infection prevalence and
+clinical incidence is available, the relationship between infection
+incidence and clinical incidence can be inferred as follows.
+
+We assume that a pre-determined function
+![g()](https://latex.codecogs.com/png.latex?g%28%29 "g()") is available
+that maps from the ‘true’ population infection prevalence
+![p\_{i}](https://latex.codecogs.com/png.latex?p_%7Bi%7D "p_{i}") to the
+‘true’ underlying clinical incidence
+![c\_{i}](https://latex.codecogs.com/png.latex?c_%7Bi%7D "c_{i}") in
+some population and setting
+![i](https://latex.codecogs.com/png.latex?i "i"), for which the
+corresponding infection incidence is held constant:
+
+![c\_{i} = g(p\_{i})](https://latex.codecogs.com/png.latex?c_%7Bi%7D%20%3D%20g%28p_%7Bi%7D%29 "c_{i} = g(p_{i})")
+
+In this case,
+![c\_{i}](https://latex.codecogs.com/png.latex?c_%7Bi%7D "c_{i}") gives
+the incidence of all clinical episodes regardless whether those cases
+would be recorded in a health system. We therefore assume that
+![g()](https://latex.codecogs.com/png.latex?g%28%29 "g()") is estimated
+against empirical estimates of
+![p\_{i}](https://latex.codecogs.com/png.latex?p_%7Bi%7D "p_{i}") and of
+![c\_{i}](https://latex.codecogs.com/png.latex?c_%7Bi%7D "c_{i}") that
+would be observed under some intensive surveillance (e.g. a prospective
+study), or other high-quality source of information. We therefore
+capture imperfect reporting in the health system under which observed
+case counts
+![C\_{i}](https://latex.codecogs.com/png.latex?C_%7Bi%7D "C_{i}") are
+collected via some constant reporting rate
+![r](https://latex.codecogs.com/png.latex?r "r"):
+
+![C\_{i} = r \\ d \\ M_i \\ c\_{i}](https://latex.codecogs.com/png.latex?C_%7Bi%7D%20%3D%20r%20%5C%2C%20d%20%5C%2C%20M_i%20%5C%2C%20c_%7Bi%7D "C_{i} = r \, d \, M_i \, c_{i}")
+
+where ![d](https://latex.codecogs.com/png.latex?d "d") is the duration
+of time periods over which the counts are made, and
+![M_i](https://latex.codecogs.com/png.latex?M_i "M_i") is the size of
+this population (converting from clinical incidence to the number of
+clinical cases, as above). Under the assumption (from
+![g()](https://latex.codecogs.com/png.latex?g%28%29 "g()")) that
+infection incidence
+![f\_{i}](https://latex.codecogs.com/png.latex?f_%7Bi%7D "f_{i}") is
+constant over the period to which
+![c\_{i}](https://latex.codecogs.com/png.latex?c_%7Bi%7D "c_{i}") and
+![p\_{i}](https://latex.codecogs.com/png.latex?p_%7Bi%7D "p_{i}")
+correspond, these two quantities can therefore be related as:
+
+![c\_{i} = \kappa_i f\_{i}](https://latex.codecogs.com/png.latex?c_%7Bi%7D%20%3D%20%5Ckappa_i%20f_%7Bi%7D "c_{i} = \kappa_i f_{i}")
+
+where
+![\kappa_i](https://latex.codecogs.com/png.latex?%5Ckappa_i "\kappa_i")
+is the fraction of infections at location
+![i](https://latex.codecogs.com/png.latex?i "i") resulting in a clinical
+case (recorded or otherwise), and:
+
+![p\_{i} = q^\* \\ f\_{i}](https://latex.codecogs.com/png.latex?p_%7Bi%7D%20%3D%20q%5E%2A%20%5C%2C%20f_%7Bi%7D "p_{i} = q^* \, f_{i}")
+
+where ![q^\*](https://latex.codecogs.com/png.latex?q%5E%2A "q^*") is the
+average number of subsequent days on which each new infection would test
+positive, if tested once per day (following from the convolution above,
+in the case that
+![f\_{l,t}](https://latex.codecogs.com/png.latex?f_%7Bl%2Ct%7D "f_{l,t}")
+and therefore
+![I\_{l,t}](https://latex.codecogs.com/png.latex?I_%7Bl%2Ct%7D "I_{l,t}")
+are constant over time); the integral of the detectability function
+![q()](https://latex.codecogs.com/png.latex?q%28%29 "q()"):
+
+![q^\* = \int\_{0}^{\tau_q}{q(t) dt}](https://latex.codecogs.com/png.latex?q%5E%2A%20%3D%20%5Cint_%7B0%7D%5E%7B%5Ctau_q%7D%7Bq%28t%29%20dt%7D "q^* = \int_{0}^{\tau_q}{q(t) dt}")
+
+This scalar value
+![q^\*](https://latex.codecogs.com/png.latex?q%5E%2A "q^*") can equally
+be interpretted as the average number of previous days worth of
+infections that are detected on the day of a prevalence survey. In
+practice, ![q^\*](https://latex.codecogs.com/png.latex?q%5E%2A "q^*")
+can be estimated by a sufficiently-fine resolution discrete sum over
+![q(t)](https://latex.codecogs.com/png.latex?q%28t%29 "q(t)").
+
+Combining the above, we have that:
+
+![c_i = \kappa_i \\ f_i = g(q^\* f_i)](https://latex.codecogs.com/png.latex?c_i%20%3D%20%5Ckappa_i%20%5C%2C%20f_i%20%3D%20g%28q%5E%2A%20f_i%29 "c_i = \kappa_i \, f_i = g(q^* f_i)")
+
+and therefore:
+
+![\kappa_i = g(q^\* f_i) / f_i](https://latex.codecogs.com/png.latex?%5Ckappa_i%20%3D%20g%28q%5E%2A%20f_i%29%20%2F%20f_i "\kappa_i = g(q^* f_i) / f_i")
+
+simce
+![\gamma_i = r \\ \kappa_i](https://latex.codecogs.com/png.latex?%5Cgamma_i%20%3D%20r%20%5C%2C%20%5Ckappa_i "\gamma_i = r \, \kappa_i"),
+and applying this relationship to our spatio-temporally varying
+infection incidences
+![f\_{l,t}](https://latex.codecogs.com/png.latex?f_%7Bl%2Ct%7D "f_{l,t}"),
+we can compute
+![\gamma\_{l,t}](https://latex.codecogs.com/png.latex?%5Cgamma_%7Bl%2Ct%7D "\gamma_{l,t}")
+as:
+
+![\gamma\_{l,t} = r \\ g(q^\* f\_{l,t}) \\ / \\ f\_{l,t}](https://latex.codecogs.com/png.latex?%5Cgamma_%7Bl%2Ct%7D%20%3D%20r%20%5C%2C%20g%28q%5E%2A%20f_%7Bl%2Ct%7D%29%20%5C%2C%20%2F%20%5C%2C%20f_%7Bl%2Ct%7D "\gamma_{l,t} = r \, g(q^* f_{l,t}) \, / \, f_{l,t}")
+
+where ![q^\*](https://latex.codecogs.com/png.latex?q%5E%2A "q^*") is a
+scalar constant that can be computed *a priori* from
+![q](https://latex.codecogs.com/png.latex?q "q"),
+![g()](https://latex.codecogs.com/png.latex?g%28%29 "g()") is a
+deterministic function, also known *a priori*,
+![f\_{l,t}](https://latex.codecogs.com/png.latex?f_%7Bl%2Ct%7D "f_{l,t}")
+is our inference target, the daily infection incidence, and
+![r](https://latex.codecogs.com/png.latex?r "r") is the only remaining
+free parameter in this relationship, which is identifiable in the model.
+
+In practice, the functional form of
+![g()](https://latex.codecogs.com/png.latex?g%28%29 "g()") may well
+permit the computational complexity of this term to be reduced, either
+by computing a simpler analytic solution, or approximating it with a
+functionally simpler form with near-equivalent shape. This will likely
+aid in reducing the computational cost of fitting the model.
 
 ## Computational approaches
 

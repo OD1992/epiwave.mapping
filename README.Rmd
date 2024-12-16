@@ -1,6 +1,8 @@
 ---
 output:
   github_document:
+    toc: true
+    toc_depth: 3
     pandoc_args: --webtex
 ---
 
@@ -9,6 +11,7 @@ output:
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
+  cache = TRUE,
   comment = "#>",
   message = FALSE
 )
@@ -108,6 +111,54 @@ $$
 K_{l,t,l',t'} = \sigma^2 \, K_{\text{space}}(||l-l'||; \phi) \, K_{\text{time}}(|t-t'|; \theta)
 $$
 where $\sigma^2$ is the marginal variance (amplitude) of the resultant Gaussian process, $K_{\text{space}}(.; \phi)$ is an (unit variance) isotropic spatial kernel on euclidean distances $||l-l'||$ with parameter $\phi > 0$ controlling the range of spatial correlation, and $K_{\text{time}}(|t-t'|; \theta)$ is a a temporal kernel on time differences $|t-t'|$, with parameter $\theta$ controlling the range of temporal correlation. Again for computational reasons, we prefer Markovian kernels for $K_{\text{time}}$.
+
+### Infection prevalence - clinical incidence relationship
+
+As described above, the spatially- and temporally-varying parameter $\gamma_{l,t}$  gives the fraction of new infections that would result in a recorded clinical case. In the absence of additional data to that described above, it is unlikely that spatio-temporal variation in this parameter can be inferred. For some diseases - e.g. those where previous infections confer little immune protection from symptoms of future infections - it may be sufficient to model this as a constant, in which case it can be inferred statistically. However for many diseases, there is likely to be a non-linear relationship between the infection incidence in a given population, and the fraction of those infections that result in a clinical case. Where repeat infections decrease the clinical severity of subsequent infections, $\gamma_{l,t}$ is likely to manifest as a monotone decreasing function of infection incidence $f_{l,t}$. In this scenario, it would be preferable to account for this relationship using external information. In the case of malaria, this relationship is often explored using empirical data in terms of the relationship between infection prevalence and clinical incidence. Where a previously-estimated relationship between infection prevalence and clinical incidence is available, the relationship between infection incidence and clinical incidence can be inferred as follows.
+
+We assume that a pre-determined function $g()$ is available that maps from the 'true' population infection prevalence $p_{i}$ to the 'true' underlying clinical incidence $c_{i}$ in some population and setting $i$, for which the corresponding infection incidence is held constant:
+
+$$
+c_{i} = g(p_{i})
+$$
+
+In this case, $c_{i}$ gives the incidence of all clinical episodes regardless whether those cases would be recorded in a health system. We therefore assume that $g()$ is estimated against empirical estimates of $p_{i}$ and of $c_{i}$ that would be observed under some intensive surveillance (e.g. a prospective study), or other high-quality source of information. We therefore capture imperfect reporting in the health system under which observed case counts $C_{i}$ are collected via some constant reporting rate $r$:
+
+$$
+C_{i} = r \, d \, M_i \, c_{i}
+$$
+where $d$ is the duration of time periods over which the counts are made, and $M_i$ is the size of this population (converting from clinical incidence to the number of clinical cases, as above). Under the assumption (from $g()$) that infection incidence $f_{i}$ is constant over the period to which $c_{i}$ and $p_{i}$ correspond, these two quantities can therefore be related as:
+
+$$
+c_{i} = \kappa_i f_{i}
+$$
+where $\kappa_i$ is the fraction of infections at location $i$ resulting in a clinical case (recorded or otherwise), and:
+$$
+p_{i} = q^* \, f_{i}
+$$
+where $q^*$ is the average number of subsequent days on which each new infection would test positive, if tested once per day (following from the convolution above, in the case that $f_{l,t}$ and therefore $I_{l,t}$ are constant over time); the integral of the detectability function $q()$: 
+$$
+q^* = \int_{0}^{\tau_q}{q(t) dt}
+$$
+This scalar value $q^*$ can equally be interpretted as the average number of previous days worth of infections that are detected on the day of a prevalence survey. In practice, $q^*$ can be estimated by a sufficiently-fine resolution discrete sum over $q(t)$.
+
+Combining the above, we have that:
+
+$$
+c_i = \kappa_i \, f_i = g(q^* f_i)
+$$
+and therefore:
+$$
+\kappa_i = g(q^* f_i) / f_i
+$$
+simce $\gamma_i = r \, \kappa_i$, and applying this relationship to our spatio-temporally varying infection incidences $f_{l,t}$, we can compute $\gamma_{l,t}$ as:
+$$
+\gamma_{l,t} = r \, g(q^* f_{l,t}) \, / \, f_{l,t}
+$$
+
+where $q^*$ is a scalar constant that can be computed *a priori* from $q$, $g()$ is a deterministic function, also known *a priori*, $f_{l,t}$ is our inference target, the daily infection incidence, and $r$ is the only remaining free parameter in this relationship, which is identifiable in the model.
+
+In practice, the functional form of $g()$ may well permit the computational complexity of this term to be reduced, either by computing a simpler analytic solution, or approximating it with a functionally simpler form with near-equivalent shape. This will likely aid in reducing the computational cost of fitting the model.
 
 ## Computational approaches
 
