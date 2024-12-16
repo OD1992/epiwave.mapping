@@ -8,6 +8,8 @@
 #' @param years
 #' @param n_health_facilities
 #' @param n_prev_surveys
+#' @param case_missingness
+#' @param prev_survey_time
 #' @return
 #' @author Nick Golding
 #' @export
@@ -16,15 +18,21 @@
 # covariate values, a single-layer SpatRaster of 'population_rast' of temporally
 # static population distribution, a vector of 'years' to consider, and the
 # number of health facilities ('n_health_facilities') and prevalence surveys
-# locations ('n_prev_surveys'), simulate health facilities, health-facility
-# level clinical case counts, and infection prevalence survey locations and
-# results, and return these along with the true parameters, latent quantities of
-# interest and parameters of the surveillance processes.
+# locations ('n_prev_surveys'), the proportion of month/healthfacility
+# combinations for which clinical case count data are missing
+# 'case_missingness', and the time period in which the prevalence survey
+# occurred 'prevalence_survey_time' (in months since the start of the first
+# year, by default the midpoint of 'years'), simulate health facilities,
+# health-facility level clinical case counts, and infection prevalence survey
+# locations and results, and return these along with the true parameters, latent
+# quantities of interest and parameters of the surveillance processes.
 sim_data <- function(covariates_rast,
                      population_rast,
                      years = 2020:2024,
                      n_health_facilities = 100,
-                     n_prev_surveys = 30) {
+                     n_prev_surveys = 30,
+                     case_missingness = 0.15,
+                     prev_survey_time = round(length(years) * 12 / 2)) {
 
   # use a monthly timestep, so create times for these years
   n_times <- length(years) * 12
@@ -129,10 +137,19 @@ sim_data <- function(covariates_rast,
   names(clinical_cases_pixel) <- names(epsilon)
 
   # simulate data collection
-  prevalence_surveys <- sim_prev_surveys(one_prevalence_rast = prevalence[[16]],
+
+  # simulate a prevalence survey
+  prev_slice <- prevalence[[prev_survey_time]]
+  prevalence_surveys <- sim_prev_surveys(one_prevalence_rast = prev_slice,
                                          population_rast = population_rast,
                                          n_surveys = n_prev_surveys,
                                          n_samples = 1000)
+
+  # add on the time period
+  prevalence_surveys <- prevalence_surveys %>%
+    dplyr::mutate(
+      time = prev_survey_time
+    )
 
   # simulate some health facilities at which to observe case counts
   health_facilities <- sim_health_facilities(
@@ -142,12 +159,13 @@ sim_data <- function(covariates_rast,
   # aggregate expected case counts by these facilities and simulate case data
   clinical_cases <- sim_clinical_cases(
     clinical_cases_rast = clinical_cases_pixel,
-    health_facilities = health_facilities)
+    health_facilities = health_facilities,
+    missingness = case_missingness)
 
   # return all these objects as a structured list
   list(
     epi_data = list(
-      # prevalence survey data and locations
+      # prevalence survey data, locations, and time
       prevalence_surveys = prevalence_surveys,
       # clinical case counts
       clinical_cases = clinical_cases

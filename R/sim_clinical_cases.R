@@ -44,6 +44,7 @@ sim_clinical_cases <- function(clinical_cases_rast,
       values_to = "expected_cases"
     ) %>%
     dplyr::mutate(
+      time = as.integer(time),
       cases = rpois(dplyr::n(), expected_cases),
       cases = dplyr::case_when(
         rbinom(dplyr::n(), 1, missingness) == 1 ~ NA,

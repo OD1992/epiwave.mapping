@@ -392,15 +392,142 @@ Now we lower the spatial resolution. a little (to make the example run
 faster) and simulate some fake data, using the first 5 covariates
 
 ``` r
-bioclim_kenya <- terra::aggregate(bioclim_kenya, 10)
-pop_kenya <- terra::aggregate(pop_kenya, 10)
+bioclim_kenya_lores <- terra::aggregate(bioclim_kenya, 10)
+pop_kenya_lores <- terra::aggregate(pop_kenya, 10)
 
 library(epiwave.mapping)
 set.seed(1)
+start_year <- 2020
+n_years <- 5
 data <- sim_data(
-  covariates_rast = bioclim_kenya[[1:5]],
-  population_rast = pop_kenya, 
-  years = 2020:2024,
-  n_health_facilities = 100,
-  n_prev_surveys = 30)
+  covariates_rast = bioclim_kenya_lores[[1:5]],
+  population_rast = pop_kenya_lores, 
+  years = seq(start_year, start_year + n_years - 1),
+  n_health_facilities = 60,
+  n_prev_surveys = 30,
+  # assume some fraction of case counts are missing
+  case_missingness = 0.3)
 ```
+
+Let’s visualise the fake data.
+
+Plot the fake health facility locations over the population raster:
+
+``` r
+library(tidyverse)
+#> Warning: package 'ggplot2' was built under R version 4.2.3
+#> Warning: package 'tidyr' was built under R version 4.2.3
+#> Warning: package 'dplyr' was built under R version 4.2.3
+#> ── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──
+#> ✔ dplyr     1.1.4     ✔ readr     2.1.4
+#> ✔ forcats   1.0.0     ✔ stringr   1.5.0
+#> ✔ ggplot2   3.5.1     ✔ tibble    3.2.1
+#> ✔ lubridate 1.9.2     ✔ tidyr     1.3.1
+#> ✔ purrr     1.0.2     
+#> ── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+#> ✖ tidyr::extract() masks terra::extract()
+#> ✖ dplyr::filter()  masks stats::filter()
+#> ✖ dplyr::lag()     masks stats::lag()
+#> ℹ Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
+library(tidyterra)
+#> 
+#> Attaching package: 'tidyterra'
+#> 
+#> The following object is masked from 'package:stats':
+#> 
+#>     filter
+
+# plot the health facility locations
+ggplot() +
+  geom_spatraster(data = pop_kenya_lores) +
+  scale_fill_gradient(
+    low = grey(0.9),
+    high = grey(0.6),
+    transform = "log1p",
+    na.value = "transparent",
+    guide = "none") +
+  geom_point(
+    aes(
+      y = y,
+      x = x
+    ),
+    data = data$surveillance_information$health_facilities$health_facility_loc,
+    shape = 16
+  ) +
+  xlab("") +
+  ylab("") +
+  theme_minimal()
+```
+
+![](README_files/figure-gfm/vis_data_1-1.png)<!-- --> Now let’s plot the
+clinical case timeseries
+
+``` r
+
+# add months and years onto the clinical cases, for plotting
+cases <- data$epi_data$clinical_cases %>%
+  mutate(
+    month = 1 + (time - 1) %% 12,
+    year = start_year + (time - 1) %/% 12,
+    health_facility = factor(health_facility)
+  )
+
+ggplot(
+  aes(
+    x = month,
+    y = cases,
+    colour = health_facility,
+    group = health_facility
+  ),
+  data = cases) +
+  facet_wrap(~year) +
+  geom_line(
+    linewidth = 0.3
+  ) + 
+  theme_minimal() +
+  scale_colour_discrete(
+    guide = "none"
+  ) +
+  scale_x_continuous(breaks = 1:12)
+#> Warning: Removed 43 rows containing missing values or values outside the scale range
+#> (`geom_line()`).
+```
+
+![](README_files/figure-gfm/vis_data_2-1.png)<!-- -->
+
+and the prevalence survey results
+
+``` r
+prev_surveys <- data$epi_data$prevalence_surveys %>%
+  mutate(
+    prevalence = n_positive / n_sampled
+  )
+
+ggplot() +
+  geom_spatraster(data = pop_kenya_lores) +
+  scale_fill_gradient(
+    low = grey(0.9),
+    high = grey(0.9),
+    na.value = "transparent",
+    guide = "none") +
+  geom_point(
+    aes(
+      y = y,
+      x = x,
+      colour = prevalence
+    ),
+    data = prev_surveys,
+    size = 3,
+    shape = 16
+  ) +
+  scale_colour_gradient(
+    labels = scales::label_percent(),
+    low = "skyblue",
+    high = "darkred"
+  ) +
+  xlab("") +
+  ylab("") +
+  theme_minimal()
+```
+
+![](README_files/figure-gfm/vis_data_3-1.png)<!-- -->
