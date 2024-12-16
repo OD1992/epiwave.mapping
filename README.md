@@ -12,6 +12,12 @@
     - [Discrete-time convolution](#discrete-time-convolution)
     - [Gaussian process simulation](#gaussian-process-simulation)
   - [Example application](#example-application)
+    - [Simulating data](#simulating-data)
+    - [Model specification using
+      greta](#model-specification-using-greta)
+    - [Model fitting and prediction](#model-fitting-and-prediction)
+    - [Comparison with simulated
+      truth](#comparison-with-simulated-truth)
 
 <!-- README.md is generated from README.Rmd. Please edit that file -->
 
@@ -511,6 +517,8 @@ from this package, we use a real grid of environmental covariates, but
 simulate the locations of health facilities, prevalence survey
 locations, and all datasets to which we will then fit the model.
 
+### Simulating data
+
 First we load the bioclim covariates using the `terra` and `geodata` R
 package:
 
@@ -544,12 +552,15 @@ faster) and simulate some fake data, using the first 5 covariates:
 bioclim_kenya_lores <- terra::aggregate(bioclim_kenya, 10)
 pop_kenya_lores <- terra::aggregate(pop_kenya, 10)
 
-library(epiwave.mapping)
-set.seed(1)
 start_year <- 2020
 n_years <- 5
+
+covariates_lores <- bioclim_kenya_lores[[1:5]]
+library(epiwave.mapping)
+set.seed(1)
+
 data <- sim_data(
-  covariates_rast = bioclim_kenya_lores[[1:5]],
+  covariates_rast = covariates_lores,
   population_rast = pop_kenya_lores, 
   years = seq(start_year, start_year + n_years - 1),
   n_health_facilities = 60,
@@ -625,7 +636,7 @@ ggplot(
   ) +
   scale_x_continuous(breaks = 1:12) +
   ggtitle("Clinical case timeseries")
-#> Warning: Removed 39 rows containing missing values or values outside the scale range
+#> Warning: Removed 40 rows containing missing values or values outside the scale range
 #> (`geom_line()`).
 ```
 
@@ -734,3 +745,94 @@ ggplot(
 ```
 
 ![](README_files/figure-gfm/vis_data_6-1.png)<!-- -->
+
+### Model specification using greta
+
+To specify the model in greta, first we define all free model
+hyperparameters (ie. all parameters except for the spatiotemporal random
+effects `epsilon`). Here we use an arbitrary set of priors, that happen
+to be those used to simulate the ‘true’ parameters in
+`epiwave.mapping::sim_data()`. In a pracctical application, the user
+should give these a lot more thought.
+
+``` r
+library(greta)
+
+# intercept and slope for fixed-effects terms on daily infection incidence
+alpha <- normal(log(1e-4), 1)
+beta <- normal(0, 1, dim = terra::nlyr(covariates_lores))
+# fraction of all clinical cases reported in case counts
+r <- beta(10, 5)
+# variance, spatial correlation range, and temporal correlation of epsilon
+sigma <- beta(12, 8)
+phi <- beta(16, 4)
+theta <- beta(18, 2)
+```
+
+We can use functions from `epiwave.mapping` to define the model for the
+spatio-temporal random effect epsilon, using the block-circulant basis
+approach. To do so, we first need to ensure that the raster we use to
+define this computational setup is appropriately projected, so that we
+can make a reasonable assumption that the grid of cells is regularly
+spaced in both dimensions:
+
+``` r
+# define a mask raster - 0 in land cells, NA elsewhere
+kenya_mask_lores <- pop_kenya_lores * 0
+
+# Pick projectionas UTM zone 36S (Uganda, Kenya, Tanzania)
+new_crs <- "epsg:21036"
+
+# project the raster to set up our grid
+grid_raster <- terra::project(kenya_mask_lores, new_crs)
+
+# also project the covariates
+covariates_raster <- terra::project(covariates_lores, new_crs)
+```
+
+Now we can define the objects required for the block-circulant basis
+approach to simulating IID Guassian processes over space, and converting
+them to spatio-temporal Gaussian processes:
+
+``` r
+bcb_setup <- define_bcb_setup(grid_raster)
+```
+
+Now we can define a space-time Gaussian process over `epsilon`, by first
+defining our isotropic spatial kernel, using the greta.gp R package, and
+the Markovian temporal kernel by passing the parameters to
+`epiwave.mapping`:
+
+``` r
+library(greta.gp)
+nu = alpha - 1
+alpha = 2
+nu = 1
+k_space <- mat32()
+```
+
+Define the temporal process
+
+Compute expected infections
+
+Compute expected prevalence at prevalence survey locations
+
+Compute expected reported cases at all pixels
+
+Aggregate expected reported cases at health facilities
+
+Define likelihoods - accounting for missingness in clinical cases
+
+### Model fitting and prediction
+
+Run MCMC
+
+Make pixel-level posterior prediction maps of infection incidence,
+clinical incidence, prevalence
+
+Aggregate these up to district-level posterior summaries
+
+### Comparison with simulated truth
+
+Compare side-by-side with ‘true’ simulated surfaces from the `data`
+object

@@ -27,7 +27,7 @@ sim_epsilon <- function(template_rast,
                 y = y_grid),
     setup = TRUE,
     aRange = phi_space,
-    smoothness = 1
+    smoothness = 2.5 # matern 5/2
   )
 
   # empty matrix for random white noise values

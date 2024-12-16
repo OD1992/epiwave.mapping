@@ -182,6 +182,8 @@ An appealing alternative in this case is to compute the full spatial GP for ever
 
 We demonstrate the model with application to mapping the (simulated) infection incidence of malaria in Kenya from simulated clinical incidence and infection prevalence data. Using the `sim_data()` function from this package, we use a real grid of environmental covariates, but simulate the locations of health facilities, prevalence survey locations, and all datasets to which we will then fit the model.
 
+### Simulating data
+
 First we load the bioclim covariates using the `terra` and `geodata` R package:
 ```{r bioclim, eval = FALSE}
 library(terra)
@@ -224,15 +226,23 @@ pop_kenya <- mask(pop_kenya, kenya_mask)
 
 Now we lower the spatial resolution a little (to make the example run faster) and simulate some fake data, using the first 5 covariates:
 ```{r sim_data}
+
+# aggregate rasters
 bioclim_kenya_lores <- terra::aggregate(bioclim_kenya, 10)
 pop_kenya_lores <- terra::aggregate(pop_kenya, 10)
 
-library(epiwave.mapping)
-set.seed(1)
+# set time periods
 start_year <- 2020
 n_years <- 5
+
+# subset and scale the bioclim layers to make our covariates
+covariates_lores <- scale(bioclim_kenya_lores[[1:5]])
+
+# simulate fake data
+library(epiwave.mapping)
+set.seed(1)
 data <- sim_data(
-  covariates_rast = bioclim_kenya_lores[[1:5]],
+  covariates_rast = covariates_lores,
   population_rast = pop_kenya_lores, 
   years = seq(start_year, start_year + n_years - 1),
   n_health_facilities = 60,
@@ -398,3 +408,105 @@ ggplot(
   ylab("Clinical incidence (annual)") +
   ggtitle("Prevalence - clinical incidence function")
 ```
+
+### Model specification using greta
+
+To specify the model in greta, first we define all free model hyperparameters (ie. all parameters except for the spatiotemporal random effects `epsilon`). Here we use an arbitrary set of priors, that happen to be those used to simulate the 'true' parameters in `epiwave.mapping::sim_data()`. In a pracctical application, the user should give these a lot more thought. 
+```{r define_priors}
+library(greta)
+
+# intercept and slope for fixed-effects terms on daily infection incidence
+alpha <- normal(log(1e-4), 1)
+beta <- normal(0, 1, dim = terra::nlyr(covariates_lores))
+# fraction of all clinical cases reported in case counts
+r <- beta(10, 5)
+# variance, spatial correlation range, and temporal correlation of epsilon
+sigma <- beta(12, 8)
+phi <- beta(16, 4)
+theta <- beta(18, 2)
+```
+
+We can use functions from `epiwave.mapping` to define the model for the spatio-temporal random effect epsilon, using the block-circulant basis approach. To do so, we first need to ensure that the raster we use to define this computational setup is appropriately projected, so that we can make a reasonable assumption that the grid of cells is regularly spaced in both dimensions:
+
+```{r project_rasters}
+# define a mask raster - 0 in land cells, NA elsewhere
+kenya_mask_lores <- pop_kenya_lores * 0
+
+# Pick projectionas UTM zone 36S (Uganda, Kenya, Tanzania)
+new_crs <- "epsg:21036"
+
+# project the raster to set up our grid
+grid_raster <- terra::project(kenya_mask_lores, new_crs)
+
+# also project the covariates
+covariates_raster <- terra::project(covariates_lores, new_crs)
+```
+
+Now we can define the objects required for the block-circulant basis approach to simulating IID Guassian processes over space, and converting them to spatio-temporal Gaussian processes: 
+
+```{r define_bcb, eval = FALSE}
+bcb_setup <- define_bcb_setup(grid_raster)
+```
+
+Now we can define a space-time Gaussian process over `epsilon`, by first defining our isotropic spatial kernel, using the greta.gp R package, and the Markovian temporal kernel by passing the parameters to `epiwave.mapping`:
+```{r define_gp, eval = FALSE}
+library(greta.gp)
+
+# to define an isotropic kernel in greta.gp, we need to repeat phi for both
+# dimensions. We set the variance to 1, since we define that at the level of the
+# space-time kernel
+k_space <- mat52(lengthscales = c(phi, phi),
+                 variance = 1)
+
+# pass this to the function to create space-time GPs over all cells
+epsilon <- sim_bcb_gp(
+  bcb_setup = bcb_setup,
+  n_times = n_years * 12,
+  space_kernel = k_space,
+  time_correlation = theta,
+  sigma = sigma
+)
+```
+Now we have the object or the spatio-temporal random effects, and all our other parameters, we can define the deterministic mapping from these, through infection incidence, to our observed data. First we compute the daily incidence of new infections, per cell, per timestep.
+
+```{r define_infection_incidence, eval = FALSE}
+
+# get an index to all pixel values
+all_cells <- terra::cells(kenya_mask_lores)
+
+# extract the covariate design matrix (scale)
+X <- extract(covariates_lores, all_cells)
+
+# matrix-multiply with beta, and add alpha, to get the spatial fixed effects
+fixef <- alpha + X %*% beta
+
+# add on epsilon, and convert to infection incidence
+eta <- sweep(epsilon, 1, fixef, FUN = "+")
+infection_incidence <- ilogit(eta)
+
+# multiply by population and timeperiod to get the count of new infections per time period
+timeperiod_days <- 365/12
+pop_all_cells <- extract(pop_kenya_lores, all_cells)
+
+new_infections <- infection_incidence * pop_all_cells * timeperiod_days
+```
+
+Compute expected prevalence at prevalence survey locations
+
+Compute expected reported cases at all pixels
+
+Aggregate expected reported cases at health facilities
+
+Define likelihoods - accounting for missingness in clinical cases
+
+### Model fitting and prediction
+
+Run MCMC
+
+Make pixel-level posterior prediction maps of infection incidence, clinical incidence, prevalence
+
+Aggregate these up to district-level posterior summaries
+
+### Comparison with simulated truth
+
+Compare side-by-side with 'true' simulated surfaces from the `data` object

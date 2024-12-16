@@ -45,8 +45,8 @@ sim_data <- function(covariates_rast,
   beta <- rnorm(terra::nlyr(covariates_rast))
   r <- rbeta(1, 10, 5)
   sigma <- rbeta(1, 12, 8)
-  phi <- rbeta(1, 16, 4)
-  theta <- rbeta(1, 18, 2)
+  phi <- rbeta(1, 20, 20)
+  theta <- rbeta(1, 39, 1)
 
   # simulate infection incidence data
   epsilon <- sim_epsilon(template_rast = population_rast,
