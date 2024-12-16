@@ -386,10 +386,9 @@ pop_kenya <- mask(pop, bioclim_kenya)
 ```
 
     #> Warning: package 'terra' was built under R version 4.2.3
-    #> terra 1.7.71
 
-Now we lower the spatial resolution. a little (to make the example run
-faster) and simulate some fake data, using the first 5 covariates
+Now we lower the spatial resolution a little (to make the example run
+faster) and simulate some fake data, using the first 5 covariates:
 
 ``` r
 bioclim_kenya_lores <- terra::aggregate(bioclim_kenya, 10)
@@ -418,24 +417,7 @@ library(tidyverse)
 #> Warning: package 'ggplot2' was built under R version 4.2.3
 #> Warning: package 'tidyr' was built under R version 4.2.3
 #> Warning: package 'dplyr' was built under R version 4.2.3
-#> ── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──
-#> ✔ dplyr     1.1.4     ✔ readr     2.1.4
-#> ✔ forcats   1.0.0     ✔ stringr   1.5.0
-#> ✔ ggplot2   3.5.1     ✔ tibble    3.2.1
-#> ✔ lubridate 1.9.2     ✔ tidyr     1.3.1
-#> ✔ purrr     1.0.2     
-#> ── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
-#> ✖ tidyr::extract() masks terra::extract()
-#> ✖ dplyr::filter()  masks stats::filter()
-#> ✖ dplyr::lag()     masks stats::lag()
-#> ℹ Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
 library(tidyterra)
-#> 
-#> Attaching package: 'tidyterra'
-#> 
-#> The following object is masked from 'package:stats':
-#> 
-#>     filter
 
 # plot the health facility locations
 ggplot() +
@@ -459,8 +441,10 @@ ggplot() +
   theme_minimal()
 ```
 
-![](README_files/figure-gfm/vis_data_1-1.png)<!-- --> Now let’s plot the
-clinical case timeseries
+![](README_files/figure-gfm/vis_data_1-1.png)<!-- -->
+
+Plot the clinical case timeseries for all health facilities over each
+year:
 
 ``` r
 
@@ -495,7 +479,7 @@ ggplot(
 
 ![](README_files/figure-gfm/vis_data_2-1.png)<!-- -->
 
-and the prevalence survey results
+Plot the prevalence survey results at the prevalence survey locations:
 
 ``` r
 prev_surveys <- data$epi_data$prevalence_surveys %>%
@@ -531,3 +515,46 @@ ggplot() +
 ```
 
 ![](README_files/figure-gfm/vis_data_3-1.png)<!-- -->
+
+Plot the fake delay distribution (probability mass function over days)
+and prevalence survey detectability functions:
+
+``` r
+case_delay_plot <- tibble(
+  days = seq(0, data$surveillance_information$case_delay_max_days)) %>%
+  mutate(
+    pmf = data$surveillance_information$case_delay_distribution_daily_fun
+(days)
+  )
+
+ggplot(
+  aes(x = days,
+      y = pmf),
+  data = case_delay_plot) +
+  geom_step() +
+  theme_minimal() +
+  ggtitle("Case reporting delay distribution",
+          "Probability of reporting X days after infection")
+```
+
+![](README_files/figure-gfm/vis_data_4-1.png)<!-- -->
+
+``` r
+detectability_plot <- tibble(
+  days = seq(0, data$surveillance_information$prev_detectability_max_days)) %>%
+  mutate(
+    detectability = data$surveillance_information$prev_detectability_daily_fun
+(days)
+  )
+
+ggplot(
+  aes(x = days,
+      y = detectability),
+  data = detectability_plot) +
+  geom_step() +
+  theme_minimal() +
+  ggtitle("Prevalence survey detectability function",
+          "Probability of registering a positive if tested X days after infection")
+```
+
+![](README_files/figure-gfm/vis_data_5-1.png)<!-- -->

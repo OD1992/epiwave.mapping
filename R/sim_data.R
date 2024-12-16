@@ -174,11 +174,11 @@ sim_data <- function(covariates_rast,
       # health facility locations and catchment probabilities
       health_facilities = health_facilities,
       # daily probability of positive result in prevalence diagnostic
-      prev_detectability_daily_fun = q,
+      prev_detectability_daily_fun = q_daily,
       # maximum detectability in days
       prev_detectability_max_days =  max_infection_detectability,
       # probability mass function of case reporting delay distribution in days
-      case_delay_distribution_daily_fun = pi,
+      case_delay_distribution_daily_fun = pi_daily,
       # maximum delay in case reporting in days
       case_delay_max_days = max_case_delay
     ),
