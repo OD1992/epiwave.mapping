@@ -19,7 +19,10 @@ sim_bcb_gp <- function(bcb_setup = bcb_setup,
 
   # given the bcb setup and number of timesteps to simulate define the latent
   # white noise parameter
-  v <- normal(0, 1, dim = bcb_setup$dim_all)
+  v <- normal(0, 1, dim = prod(bcb_setup$dim_all))
+
+  # need to modify the extraction coordinates to refer to the vector
+  bcb_setup$extract_coords
 
   # evaluate kernel on the bcb space and get simulated values for all non-NA
   # pixels in the template raster
@@ -53,13 +56,18 @@ sim_bcb_gp <- function(bcb_setup = bcb_setup,
   # return the matrix of spatially- and temporally-correlated results
   f_mat
 
-
-
-
 }
 
+# given standard normal matrix v, kernel, and bcb setup, colour the spatial
+# correlation and then return only the elements of the compute grid that were in
+# the original raster
+bcb_gp <- function (v, kernel, bcb_setup) {
+  z_all <- bcb_gp_colour(bcb_setup, v, kernel)
+  z <- bcb_gp_extract(bcb_setup, z_all)
+  z
+}
 
-
+# do the colouring (applying covariance structure) of the random variables
 bcb_gp_colour <- function (bcb_setup, v_all, kernel) {
 
   # apply the greta.gp spatial kernel to the minimal vector of distances (one
@@ -70,22 +78,22 @@ bcb_gp_colour <- function (bcb_setup, v_all, kernel) {
   # since the kernel is expecting locations, but the bcb_setup provides
   # distances from the centroid, we need to flatten the grid of distances,
   # compute covariance from 0, and then reshape
-  dist_vec <- as.vector(bcb_setup$dist)
-  covar <- kernel(dist_vec, 0)
-  dim(covar) <- dim(bcb_setup$dist)
+  # dist_vec <- as.vector(bcb_setup$dist_vec)
+  covar_vec <- kernel(bcb_setup$dist_vec, 0)
+  # dim(covar) <- dim(bcb_setup$dist)
 
   # if v_all is a list, loop through applying it on the pre-evaluated kernel
   if (is.list(v_all) && inherits(v_all[[1]], "greta_array")) {
 
     ans <- lapply(v_all,
                   function (v) {
-                    spectral_colour(covar, v, bcb_setup)
+                    spectral_colour(covar_vec, v, bcb_setup)
                   })
 
     # otherwise just apply the 'colouring' once
   } else {
 
-    ans <- spectral_colour(covar, v_all, bcb_setup)
+    ans <- spectral_colour(covar_vec, v_all, bcb_setup)
 
   }
 
@@ -97,20 +105,20 @@ bcb_gp_colour <- function (bcb_setup, v_all, kernel) {
 # and standard normal random variables, 'colour' them (apply
 # correlation/covariance) and return the greta array of coloured random
 # variables
-spectral_colour <- function (covar, v, bcb_setup) {
+spectral_colour <- function (covar_vec, v, bcb_setup) {
 
   # check inputs are both greta arrays
-  if (!inherits(covar, "greta_array") |
+  if (!inherits(covar_vec, "greta_array") |
       !inherits(v, "greta_array")) {
-    stop ("'covar' and 'v' must both be greta arrays",
+    stop ("'covar_vec' and 'v' must both be greta arrays",
           call. = FALSE)
   }
 
   # check they have the same dimensions
-  if (!identical(dim(covar), dim(v))) {
-    stop ("'covar' and 'v' must have the same dimensions, ",
-          "but 'covar' had dimensions ",
-          paste0(dim(covar), collapse = "x"),
+  if (!identical(dim(covar_vec), dim(v))) {
+    stop ("'covar_vec' and 'v' must have the same dimensions, ",
+          "but 'covar_vec' had dimensions ",
+          paste0(dim(covar_vec), collapse = "x"),
           " and 'v' had dimensions ",
           paste0(dim(v), collapse = "x"),
           call. = FALSE)
@@ -120,47 +128,77 @@ spectral_colour <- function (covar, v, bcb_setup) {
   op <- greta::.internals$nodes$constructors$op
 
   op("spectral_colour",
-     covar, v,
+     covar_vec, v,
      operation_args = list(bcb_setup = bcb_setup),
      tf_operation = "tf_spectral_colour")
 
 }
 
 # tensorflow code for the spectral colouring operation
-tf_spectral_colour <- function (covar, v, bcb_setup) {
+tf_spectral_colour <- function (covar_vec, v, bcb_setup) {
 
   tf <- tensorflow::tf
 
-  original_dim <- dim(covar)
-  vec_shape <- tensorflow::shape(prod(original_dim))
+  # load the fft adjustment vector, and reshape to align with batch dimensions
+  # etc.
+  fft_adjust_vec <- bcb_setup$fft_adjust_vec
+  dim(fft_adjust_vec) <- dim(covar_vec)
+  # fft_adjust_vec <- greta:::expand_to_batch(fft_adjust_vec, covar_vec)
 
-  # cast these to complex (only type fft accepts)
-  complex_type <- tf$complex128
-  covar <- tf$cast(covar, complex_type)
-  covar_vec <- tf$reshape(covar, vec_shape)
+  # find the complex type corresponding to the user's float type
+  float_type <- options()$greta_tf_float
+  complex_type <- switch(float_type,
+                         float32 = tf$complex64,
+                         float64 = tf$complex128)
+
+  # cast the covariance, random normals, and fft adjustment,
+  # to complex (only type fft accepts)
+  covar_vec <- tf$cast(covar_vec, complex_type)
   v <- tf$cast(v, complex_type)
-  v_vec <- tf$reshape(v, vec_shape)
+  fft_adjust_vec <- tf$cast(fft_adjust_vec, complex_type)
+
+  # TF's fft operates on the innermost dimension of the tensor, so move the
+  # batch dimension around to do calculations
+  perm <- c(1L, 2L, 0L)
+  reverse_perm <- c(2L, 0L, 1L)
+  covar_vec <- tf$transpose(covar_vec, perm)
+  v <- tf$transpose(v, perm)
+  fft_adjust_vec <- tf$transpose(fft_adjust_vec, perm)
+
+  # original_dim <- dim(covar)
+  # vec_shape <- tensorflow::shape(prod(original_dim))
+
+  # covar_vec <- tf$reshape(covar, vec_shape)
+  # v_vec <- tf$reshape(v, vec_shape)
+
+  # correctly shape the fixed adjustment, including tiling across batch
+  # dimensions
+  # fft_adjust_vec <- tf$cast(as.vector(t(bcb_setup$fft_adjust)),
+  #                           complex_type)
+  # fft_adjust_vec <- tf$reshape(fft_adjust_vec, dim(covar_vec))
 
   # cast covariance and colourless normals into spectral domain
-  fft_adjust_vec <- tf$cast(as.vector(t(bcb_setup$fft_adjust)),
-                            complex_type)
-
-  covar_fft <- tf$signal$fft(covar_vec) / fft_adjust_vec
-  v_fft <- tf$signal$fft(v_vec)
+  covar_vec_fft <- tf$signal$fft(covar_vec) / fft_adjust_vec
+  v_fft <- tf$signal$fft(v)
 
   # get coloured function in spectral domain - vectorise this?!
-  f_fft <- tf$math$sqrt(covar_fft) * v_fft
+  f_fft <- tf$math$sqrt(covar_vec_fft) * v_fft
 
   # bring coloured function back from the spectral domain
   f <- tf$math$real(tf$signal$ifft(f_fft))
 
-  # rescale
-  root_nelem <- sqrt(prod(dim(v)))
+  # rescale by the dimension size
+  # warning("change to nrow when vectorised")
+  root_nelem <- greta:::fl(sqrt(dim(v)[1]))
   f <- f / root_nelem
 
-  # cast the float type back, reshape and return
+  # cast the float type back
   f <- tf$cast(f, options()$greta_tf_float)
-  f <- tf$reshape(f, original_dim)
+
+  # permute it again, to put the batch dimension first, and return
+
+  f <- tf$transpose(f, reverse_perm)
+  # f <- tf$reshape(f, original_dim)
   f
 
 }
@@ -176,7 +214,11 @@ bcb_gp_extract <- function (bcb_setup, z) {
 
   } else {
 
+    # convert back from transposed TF version
+    dim(z) <- rev(bcb_setup$dim_all)
+    z <- t(z)
     ans <- z[bcb_setup$extract_coords]
+    # ans <- z[bcb_setup$extract_index_vec]
 
   }
 
@@ -184,9 +226,4 @@ bcb_gp_extract <- function (bcb_setup, z) {
 
 }
 
-bcb_gp <- function (v, kernel, bcb_setup) {
-  z_all <- bcb_gp_colour(bcb_setup, v, kernel)
-  z <- bcb_gp_extract(bcb_setup, z_all)
-  z
-}
 

@@ -23,9 +23,6 @@ define_bcb_setup <- function(grid_raster, check_lonlat = TRUE) {
          check_lonlat = FALSE if this is incorrect")
   }
 
-  # stash the original, to preserve
-  original_raster <- grid_raster
-
   # remove NA space around the edges
   grid_raster <- trim(grid_raster)
 
@@ -48,11 +45,15 @@ define_bcb_setup <- function(grid_raster, check_lonlat = TRUE) {
   y_sq <- centred_squared_distance(N, res[2])
   dist_squared <- outer(x_sq, y_sq, FUN = "+")
   dist <- sqrt(dist_squared)
+  # transpose, because TF expects it that way round
+  dist_vec <- as.vector(t(dist))
 
   # represent the centre location in the spectral domain
   adjust <- matrix(0, nrow = M, ncol = N)
   adjust[M / 2, N / 2] <- 1
   fft_adjust <- (stats::fft(adjust) * M * N)
+  # transpose, because TF expects it that way round
+  fft_adjust_vec <- as.vector(t(fft_adjust))
 
   # find the locations of the non-missing cells in the original raster
   # not_missing_idx <- which(!is.na(values(grid_raster)))
@@ -61,13 +62,24 @@ define_bcb_setup <- function(grid_raster, check_lonlat = TRUE) {
   extract_coords <- cbind(rowFromCell(grid_raster, cells(grid_raster)),
                           colFromCell(grid_raster, cells(grid_raster)))
 
+  # find the index of the raster cells in the vector-shaped compute grid
+  row <- extract_coords[, 1]
+  column <- extract_coords[, 2]
+  extract_index_vec <- (column - 1) * M + row
+
   # return this info as a list
   list(dim_all = c(M, N),
        dim_sub = c(m, n),
+       grid_raster = grid_raster,
+       # matrix-form
        dist = dist,
        fft_adjust = fft_adjust,
        extract_coords = extract_coords,
-       grid_raster = grid_raster)
+       # vector-form
+       n_variables = M * N,
+       dist_vec = dist_vec,
+       fft_adjust_vec = fft_adjust_vec,
+       extract_index_vec = extract_index_vec)
 
 }
 
