@@ -30,9 +30,10 @@ sim_bcb_gp <- function(bcb_setup = bcb_setup,
   # maybe apply the AR1 process to this matrix
   if (n_times > 1) {
 
-    stop("TO CHECK")
-    f_mat <- ar1ify(f_mat,
-                    time_correlation = time_correlation)
+    f <- ar1(
+      rho = time_correlation,
+      innovations = f
+    )
 
   }
 
