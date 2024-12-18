@@ -455,6 +455,8 @@ library(greta.gp)
 # to define an isotropic kernel in greta.gp, we need to repeat phi for both
 # dimensions. We set the variance to 1, since we define that at the level of the
 # space-time kernel
+
+# use a penalised complexity prior here, as per INLA
 k_space <- mat52(lengthscales = c(phi, phi),
                  variance = 1)
 
@@ -489,7 +491,7 @@ timeperiod_days <- 365/12
 pop_all_cells <- extract(pop_kenya_lores, all_cells)
 
 new_infections <- infection_incidence * pop_all_cells * timeperiod_days
-```
+```   
 
 Compute expected prevalence at prevalence survey locations
 
