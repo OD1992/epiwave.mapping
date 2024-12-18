@@ -17,26 +17,15 @@ sim_bcb_gp <- function(bcb_setup = bcb_setup,
                        n_times = 1,
                        time_correlation = 1) {
 
-  # given the bcb setup and number of timesteps to simulate define the latent
-  # white noise parameter
-  v <- normal(0, 1, dim = prod(bcb_setup$dim_all))
-
-  # need to modify the extraction coordinates to refer to the vector
-  bcb_setup$extract_coords
+  # given the bcb setup and number of times to simulate, define the latent white
+  # noise parameters for each times
+  v <- normal(0, 1, dim = c(bcb_setup$n_variables, n_times))
 
   # evaluate kernel on the bcb space and get simulated values for all non-NA
   # pixels in the template raster
   f <- bcb_gp(v = v,
               kernel = space_kernel,
               bcb_setup = bcb_setup)
-
-  # work out how to efficiently do this in a vectorised way, to get multiple draws
-
-
-  stop("TO DO")
-
-  # apply the bcb fft step
-  stop("TO DO")
 
   # maybe apply the AR1 process to this matrix
   if (n_times > 1) {
@@ -47,14 +36,15 @@ sim_bcb_gp <- function(bcb_setup = bcb_setup,
 
   }
 
-  # apply the marginal sigma
-  f_mat <- f_mat * sigma
+  # apply the marginal variance
+  f <- f * sigma
 
-  # attach the white noise as an attribute of this object
-  attr(f_mat, "white_noise") <- z
+  # attach the white noise variables as an attribute of this object, for
+  # initialisation later
+  attr(f, "v") <- v
 
   # return the matrix of spatially- and temporally-correlated results
-  f_mat
+  f
 
 }
 
@@ -78,22 +68,20 @@ bcb_gp_colour <- function (bcb_setup, v_all, kernel) {
   # since the kernel is expecting locations, but the bcb_setup provides
   # distances from the centroid, we need to flatten the grid of distances,
   # compute covariance from 0, and then reshape
-  # dist_vec <- as.vector(bcb_setup$dist_vec)
   covar_vec <- kernel(bcb_setup$dist_vec, 0)
-  # dim(covar) <- dim(bcb_setup$dist)
 
   # if v_all is a list, loop through applying it on the pre-evaluated kernel
   if (is.list(v_all) && inherits(v_all[[1]], "greta_array")) {
 
     ans <- lapply(v_all,
                   function (v) {
-                    spectral_colour(covar_vec, v, bcb_setup)
+                    spectral_colour(v, covar_vec, bcb_setup)
                   })
 
     # otherwise just apply the 'colouring' once
   } else {
 
-    ans <- spectral_colour(covar_vec, v_all, bcb_setup)
+    ans <- spectral_colour(v_all, covar_vec, bcb_setup)
 
   }
 
@@ -105,7 +93,7 @@ bcb_gp_colour <- function (bcb_setup, v_all, kernel) {
 # and standard normal random variables, 'colour' them (apply
 # correlation/covariance) and return the greta array of coloured random
 # variables
-spectral_colour <- function (covar_vec, v, bcb_setup) {
+spectral_colour <- function (v, covar_vec, bcb_setup) {
 
   # check inputs are both greta arrays
   if (!inherits(covar_vec, "greta_array") |
@@ -114,13 +102,13 @@ spectral_colour <- function (covar_vec, v, bcb_setup) {
           call. = FALSE)
   }
 
-  # check they have the same dimensions
-  if (!identical(dim(covar_vec), dim(v))) {
-    stop ("'covar_vec' and 'v' must have the same dimensions, ",
-          "but 'covar_vec' had dimensions ",
-          paste0(dim(covar_vec), collapse = "x"),
-          " and 'v' had dimensions ",
-          paste0(dim(v), collapse = "x"),
+  # check they have the same first dimensions
+  if (!(dim(covar_vec)[1] == dim(v)[1])) {
+    stop ("'covar_vec' and 'v' must have the same first dimensions, ",
+          "but 'covar_vec' had first dimension ",
+          dim(covar_vec)[1],
+          " and 'v' had first dimension ",
+          dim(v)[1],
           call. = FALSE)
   }
 
@@ -128,14 +116,14 @@ spectral_colour <- function (covar_vec, v, bcb_setup) {
   op <- greta::.internals$nodes$constructors$op
 
   op("spectral_colour",
-     covar_vec, v,
+     v, covar_vec,
      operation_args = list(bcb_setup = bcb_setup),
      tf_operation = "tf_spectral_colour")
 
 }
 
 # tensorflow code for the spectral colouring operation
-tf_spectral_colour <- function (covar_vec, v, bcb_setup) {
+tf_spectral_colour <- function (v, covar_vec, bcb_setup) {
 
   tf <- tensorflow::tf
 
@@ -199,7 +187,7 @@ bcb_gp_extract <- function (bcb_setup, z) {
 
   } else {
 
-    ans <- z[bcb_setup$extract_index_vec]
+    ans <- z[bcb_setup$extract_index_vec, ]
 
   }
 
