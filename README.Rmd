@@ -411,7 +411,7 @@ ggplot(
 
 ### Model specification using greta
 
-To specify the model in greta, first we define all free model hyperparameters (ie. all parameters except for the spatiotemporal random effects `epsilon`). Here we use an arbitrary set of priors, that happen to be those used to simulate the 'true' parameters in `epiwave.mapping::sim_data()`. In a pracctical application, the user should give these a lot more thought. 
+To specify the model in greta, first we define all free model hyperparameters (ie. all parameters except for the spatiotemporal random effects `epsilon`). Here we use an arbitrary set of priors, that happen to be those used to simulate the 'true' parameters in `epiwave.mapping::sim_data()`. In a practical application, the user should give these a lot more thought. 
 ```{r define_priors}
 library(greta)
 
@@ -420,10 +420,6 @@ alpha <- normal(log(1e-4), 1)
 beta <- normal(0, 1, dim = terra::nlyr(covariates_lores))
 # fraction of all clinical cases reported in case counts
 r <- beta(10, 5)
-# variance, spatial correlation range, and temporal correlation of epsilon
-sigma <- beta(12, 8)
-phi <- beta(16, 4)
-theta <- beta(18, 2)
 ```
 
 We can use functions from `epiwave.mapping` to define the model for the spatio-temporal random effect epsilon, using the block-circulant basis approach. To do so, we first need to ensure that the raster we use to define this computational setup is appropriately projected, so that we can make a reasonable assumption that the grid of cells is regularly spaced in both dimensions:
@@ -431,6 +427,7 @@ We can use functions from `epiwave.mapping` to define the model for the spatio-t
 ```{r project_rasters}
 # define a mask raster - 0 in land cells, NA elsewhere
 kenya_mask_lores <- pop_kenya_lores * 0
+names(kenya_mask_lores) <- NULL
 
 # Pick projectionas UTM zone 36S (Uganda, Kenya, Tanzania)
 new_crs <- "epsg:21036"
@@ -448,19 +445,57 @@ Now we can define the objects required for the block-circulant basis approach to
 bcb_setup <- define_bcb_setup(grid_raster)
 ```
 
-Now we can define a space-time Gaussian process over `epsilon`, by first defining our isotropic spatial kernel, using the greta.gp R package, and the Markovian temporal kernel by passing the parameters to `epiwave.mapping`:
+Now we can define a space-time Gaussian process over `epsilon`, by creating an isotropic spatial kernel object using the greta.gp R package, a parameter for the AR(1) temporal kernel parameter, and a marginal variance parameter, and passing these to the `epiwave.mapping` function `sim_bcb_gp()`. We first need to define priors for the three hyperparameters of the spatio-temporal process. We define a penalised complexity prior (half-normal) for the marginal variance parameter `sigma`, which shrinks the degree of spatio-temporal correlation towards 0. Since we believe negative residual correlation between time periods (oscillation between negative and positive on a monthly timesteps) to be incredibly unlikely, we define a standard uniform prior on the temporal correlation parameter `theta` so that is positive, but otherwise not informative (the spatial pattern could be either constant, or constantly changing). For the spatial range parameter `phi`, we need to take more care to consider reasonable values in terms of the units of the map (metres). We set up an informative prior to control both the lower and the upper tail of the `phi` - making very short and very long lengthscales (very short-range and long-range spatial correlations) *a priori* unlikely. This helps to resolve the various types of non-identifiability inherent in model-based geostatistics: between the lengthscale and marginal variance parameters, between shorter lengthscales and the spatial covariate parameters `beta` (spatial confounding), and between longer lengthscales and the intercept parameter `alpha`. We do so, by having the user specify upper and lower bounds on the degree of spatial correlation that would be plausible, in terms of the spatial extent of the country under consideration.
 ```{r define_gp, eval = FALSE}
 library(greta.gp)
 
-# to define an isotropic kernel in greta.gp, we need to repeat phi for both
-# dimensions. We set the variance to 1, since we define that at the level of the
-# space-time kernel
+# Variance of space-time process shrunk towards 0
+sigma <- normal(0, 1, truncation = c(0, Inf))
 
-# use a penalised complexity prior here, as per INLA
-k_space <- mat52(lengthscales = c(phi, phi),
+# Temporal correlation forced to be positive, but equally as likely to be strong as weak
+theta <- uniform(0, 1)
+
+# get the maximum spatial extent of each dimension of the raster, in metres
+grid_extent <- as.vector(ext(grid_raster))
+x_range <- grid_extent["xmax"] - grid_extent["xmin"]
+y_range <- grid_extent["ymax"] - grid_extent["ymin"]
+max_distance <- max(x_range, y_range)
+
+# First, find a lower bound for the lengthscale parameter phi, a reasonable maximum level of complexity, such that spatial correlation would be 0.1 at some fraction of the maximum distance, under a Matern 5/2 covariance structure:
+phi_lower <- matern_lengthscale_from_correl(distance = max_distance / 5,
+                                            correlation = 0.1,
+                                            nu = 5/2)
+
+# Do the same for an upper bound. A reasonable spatial correlation for
+# some longer distance.
+phi_upper <- matern_lengthscale_from_correl(distance = max_distance / 2,
+                                            correlation = 0.1,
+                                            nu = 5/2)
+
+# Now define a gamma prior on the lengthscale parameter phi, such that the mass is low on lengthscales below the lower bound (very complex
+# spatial effects) and low on lengthscales above the upper bound (completely flat spatial effects). Specifically, we find gamma parameters such that there is only a
+# 10% chance of *more complex* spatial correlations than the one above. Note that whilst an inverse gamma has the inherent property that it has no mass at 0, that is taken care of here by our lower bound, and the gamma is easier to solve for these constraints.
+gamma_prior_params <- find_gamma_parameters(upper_value = phi_upper,
+                                            upper_prob = 0.1,
+                                            lower_value = phi_lower,
+                                            lower_prob = 0.1)
+
+# # we can double check this converged OK:
+# round(pgamma(phi_lower, shape = gamma_prior_params$shape, rate = gamma_prior_params$rate), 2)
+# round(1 - pgamma(phi_upper, shape = gamma_prior_params$shape, rate = gamma_prior_params$rate), 2)
+
+# define the prior over the lengthscale parameter phi
+phi <- gamma(shape = gamma_prior_params$shape,
+             rate = gamma_prior_params$rate)
+
+# We define an isotropic kernel in greta.gp. We fix the variance of this
+# kernel to 1, since we define that parameter at the level of the combined
+# space-time kernel
+k_space <- mat52(lengthscales = phi,
                  variance = 1)
 
-# pass this to the function to create space-time GPs over all cells
+# Now we can pass this kernel and the other hyperparameters to the function to
+# create space-time GPs over all cells
 epsilon <- sim_bcb_gp(
   bcb_setup = bcb_setup,
   n_times = n_years * 12,
@@ -469,6 +504,35 @@ epsilon <- sim_bcb_gp(
   sigma = sigma
 )
 ```
+
+We can visually check that our prior is giving us reasonable values of epsilon by doing some prior simulations and then plotting them:
+```{r gp_prior_check}
+prior_sims <- calculate(epsilon,
+                        phi,
+                        theta,
+                        sigma,
+                        nsim = 1)
+
+prior_sims$phi
+prior_sims$theta
+prior_sims$sigma
+
+# the dimensions of prior_sims$epsilon are:
+# the number of simulations x the number of pixels x the number of times
+
+# create an empty multilayer raster for plotting, and fill it in with the simulations
+times_plot <- c(1, 2, 3)
+plot_raster <- do.call(c,
+                       replicate(length(times_plot),
+                                 grid_raster,
+                                 simplify = FALSE))
+for (i in seq_along(times_plot)) {
+  plot_raster[[i]][cells(grid_raster)] <- prior_sims$epsilon[1, , i]
+}
+plot(plot_raster)
+
+```
+
 Now we have the object or the spatio-temporal random effects, and all our other parameters, we can define the deterministic mapping from these, through infection incidence, to our observed data. First we compute the daily incidence of new infections, per cell, per timestep.
 
 ```{r define_infection_incidence, eval = FALSE}
