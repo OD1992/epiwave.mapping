@@ -506,31 +506,54 @@ epsilon <- sim_bcb_gp(
 ```
 
 We can visually check that our prior is giving us reasonable values of epsilon by doing some prior simulations and then plotting them:
-```{r gp_prior_check}
+```{r gp_prior_check, fig.width = 10, fig.height=9}
+n_sims <- 3
+times_plot <- 1:5
 prior_sims <- calculate(epsilon,
                         phi,
                         theta,
                         sigma,
-                        nsim = 1)
+                        nsim = n_sims)
 
-prior_sims$phi
-prior_sims$theta
-prior_sims$sigma
+# for each simulation, create an empty multilayer raster, fill it in with the simulations for each of the first three years, and plot it
+plot_list <- list() 
+for (sim in seq_len(n_sims)) {
+  
+  plot_raster <- do.call(c,
+                         replicate(length(times_plot),
+                                   grid_raster,
+                                   simplify = FALSE))
+  names(plot_raster) <- paste("timestep", times_plot)
+  
+  for (i in seq_along(times_plot)) {
+    plot_raster[[i]][cells(grid_raster)] <- prior_sims$epsilon[sim, , i]
+  }
 
-# the dimensions of prior_sims$epsilon are:
-# the number of simulations x the number of pixels x the number of times
-
-# create an empty multilayer raster for plotting, and fill it in with the simulations
-times_plot <- c(1, 2, 3)
-plot_raster <- do.call(c,
-                       replicate(length(times_plot),
-                                 grid_raster,
-                                 simplify = FALSE))
-for (i in seq_along(times_plot)) {
-  plot_raster[[i]][cells(grid_raster)] <- prior_sims$epsilon[1, , i]
+  plot_list[[sim]] <- ggplot() +
+    geom_spatraster(data = plot_raster) +
+    scale_fill_distiller(
+      palette = "PiYG",
+      na.value = "transparent",
+      guide = "none") +
+    facet_wrap(~lyr, nrow = 1) +
+    theme_minimal() +
+    xlab("") +
+    ylab("") +
+    ggtitle(label = paste("Simulation", sim),
+            subtitle = sprintf(
+              "phi (space) = %s, theta (time) = %s, sigma = %s",
+              round(prior_sims$phi[sim, 1, 1]),
+              round(prior_sims$theta[sim, 1, 1], 2),
+              round(prior_sims$sigma[sim, 1, 1], 2)
+            ))
 }
-plot(plot_raster)
 
+library(patchwork)
+combined_plot <- plot_list[[1]]
+for (sim in 2:n_sims) {
+  combined_plot <- combined_plot / plot_list[[sim]]
+}
+combined_plot
 ```
 
 Now we have the object or the spatio-temporal random effects, and all our other parameters, we can define the deterministic mapping from these, through infection incidence, to our observed data. First we compute the daily incidence of new infections, per cell, per timestep.

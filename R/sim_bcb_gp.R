@@ -115,7 +115,7 @@ tf_spectral_colour <- function (v, covar_vec, bcb_setup) {
   # load the fft adjustment vector, and reshape to align with dimensions
   # of other arrays (needed to avoid a crash at complex division step!)
   fft_adjust_vec <- bcb_setup$fft_adjust_vec
-  dim(fft_adjust_vec) <- dim(covar_vec)
+  dim(fft_adjust_vec) <- c(1, length(fft_adjust_vec), 1)
 
   # find the complex type corresponding to the user's float type
   float_type <- options()$greta_tf_float
@@ -142,7 +142,7 @@ tf_spectral_colour <- function (v, covar_vec, bcb_setup) {
   covar_vec_fft <- tf$signal$fft(covar_vec) / fft_adjust_vec
   v_fft <- tf$signal$fft(v)
 
-  # get coloured function in spectral domain - vectorise this?!
+  # get coloured function in spectral domain
   f_fft <- tf$math$sqrt(covar_vec_fft) * v_fft
 
   # bring coloured function back from the spectral domain
