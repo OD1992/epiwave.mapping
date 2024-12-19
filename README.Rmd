@@ -192,13 +192,13 @@ library(geodata)
 bioclim_kenya <- geodata::worldclim_country(
   country = "KEN",
   var = "bio",
-  res = 5,
+  res = 0.5,
   path = file.path(tempdir(), "bioclim")
 )
 
 pop <- geodata::population(
   year = 2020,
-  res = 5,
+  res = 0.5,
   path = file.path(tempdir(), "population")
 )
 
@@ -228,12 +228,12 @@ Now we lower the spatial resolution a little (to make the example run faster) an
 ```{r sim_data}
 
 # aggregate rasters
-bioclim_kenya_lores <- terra::aggregate(bioclim_kenya, 10)
-pop_kenya_lores <- terra::aggregate(pop_kenya, 10)
+bioclim_kenya_lores <- terra::aggregate(bioclim_kenya, 20)
+pop_kenya_lores <- terra::aggregate(pop_kenya, 20)
 
 # set time periods
 start_year <- 2020
-n_years <- 5
+n_years <- 3
 
 # subset and scale the bioclim layers to make our covariates
 covariates_lores <- scale(bioclim_kenya_lores[[1:5]])
@@ -245,8 +245,8 @@ data <- sim_data(
   covariates_rast = covariates_lores,
   population_rast = pop_kenya_lores, 
   years = seq(start_year, start_year + n_years - 1),
-  n_health_facilities = 60,
-  n_prev_surveys = 30,
+  n_health_facilities = 30,
+  n_prev_surveys = 15,
   # assume some fraction of case counts are missing
   case_missingness = 0.3)
 ```
@@ -447,7 +447,8 @@ library(greta.gp)
 # Variance of space-time process shrunk towards 0
 sigma <- normal(0, 1, truncation = c(0, Inf))
 
-# Temporal correlation forced to be positive, but equally as likely to be strong as weak
+# Temporal correlation forced to be positive, but equally as likely to be strong
+# as weak
 theta <- uniform(0, 1)
 
 # get the maximum spatial extent of each dimension of the raster, in metres
@@ -456,7 +457,10 @@ x_range <- grid_extent["xmax"] - grid_extent["xmin"]
 y_range <- grid_extent["ymax"] - grid_extent["ymin"]
 max_distance <- max(x_range, y_range)
 
-# First, find a lower bound for the lengthscale parameter phi, a reasonable maximum level of complexity, such that spatial correlation would be 0.1 at some fraction of the maximum distance, under a Matern 5/2 covariance structure:
+# First, find a lower bound for the lengthscale parameter phi, a reasonable
+# maximum level of complexity, such that spatial correlation would be 0.1 at
+# some fraction of the maximum distance, under a Matern 5/2 covariance
+# structure:
 phi_lower <- matern_lengthscale_from_correl(distance = max_distance / 5,
                                             correlation = 0.1,
                                             nu = 5/2)
@@ -467,17 +471,26 @@ phi_upper <- matern_lengthscale_from_correl(distance = max_distance / 2,
                                             correlation = 0.1,
                                             nu = 5/2)
 
-# Now define a gamma prior on the lengthscale parameter phi, such that the mass is low on lengthscales below the lower bound (very complex
-# spatial effects) and low on lengthscales above the upper bound (completely flat spatial effects). Specifically, we find gamma parameters such that there is only a
-# 10% chance of *more complex* spatial correlations than the one above. Note that whilst an inverse gamma has the inherent property that it has no mass at 0, that is taken care of here by our lower bound, and the gamma is easier to solve for these constraints.
+# Now define a gamma prior on the lengthscale parameter phi, such that the mass
+# is low on lengthscales below the lower bound (very complex spatial effects)
+# and low on lengthscales above the upper bound (completely flat spatial
+# effects). Specifically, we find gamma parameters such that there is only a 10%
+# chance of *more complex* spatial correlations than the one above. Note that
+# whilst an inverse gamma has the inherent property that it has no mass at 0,
+# that is taken care of here by our lower bound, and the gamma is easier to
+# solve for these constraints.
 gamma_prior_params <- find_gamma_parameters(upper_value = phi_upper,
                                             upper_prob = 0.1,
                                             lower_value = phi_lower,
                                             lower_prob = 0.1)
 
 # # we can double check this converged OK:
-# round(pgamma(phi_lower, shape = gamma_prior_params$shape, rate = gamma_prior_params$rate), 2)
-# round(1 - pgamma(phi_upper, shape = gamma_prior_params$shape, rate = gamma_prior_params$rate), 2)
+# round(pgamma(phi_lower,
+#              shape = gamma_prior_params$shape,
+#              rate = gamma_prior_params$rate), 2)
+# round(1 - pgamma(phi_upper,
+#                  shape = gamma_prior_params$shape,
+#                  rate = gamma_prior_params$rate), 2)
 
 # define the prior over the lengthscale parameter phi
 phi <- gamma(shape = gamma_prior_params$shape,
@@ -510,7 +523,8 @@ prior_sims <- calculate(epsilon,
                         sigma,
                         nsim = n_sims)
 
-# for each simulation, create an empty multilayer raster, fill it in with the simulations for each of the first three years, and plot it
+# for each simulation, create an empty multilayer raster, fill it in with the
+# simulations for each of the first three years, and plot it
 plot_list <- list() 
 for (sim in seq_len(n_sims)) {
   
@@ -579,7 +593,8 @@ fixef <- alpha + X %*% beta
 eta <- sweep(epsilon, 1, fixef, FUN = "+")
 infection_incidence <- ilogit(eta)
 
-# multiply by population and timeperiod to get the count of new infections per time period
+# multiply by population and timeperiod to get the count of new infections per
+# time period
 timeperiod_days <- 365/12
 pop_all_cells <- terra::extract(pop_raster, all_cells)[[1]]
 
@@ -601,20 +616,28 @@ prev_cells <- terra::cellFromXY(grid_raster, prev_coords)
 # get the index to rows in our compute objects
 prev_index <- match(prev_cells, all_cells)
 
-# pull out the number of infections per timeperiod in these locations
-timeperiod_new_infections_prev_locs <- timeperiod_new_infections[prev_index, ]
+# pull out the number of infections per day in these locations
+daily_new_infections_prev_locs <- daily_new_infections[prev_index, ]
 
-# now to do the convolution, we first need to translate the detectability function from a daily timestep to our monthly timestep
+# now to do the convolution, we first need to translate the detectability
+# function from a daily timestep to our monthly timestep
 q_daily <- data$surveillance_information$prev_detectability_daily_fun
 q_max_days <- data$surveillance_information$prev_detectability_max_days
 q_timeperiod <- transform_convolution_kernel(kernel_daily = q_daily,
                                   max_diff_days = q_max_days,
                                   timeperiod_days = timeperiod_days)
 
-# now we can do the convolution to compute prevalence at these locations over time
-prevalence_prev_locs <- convolve_matrix(timeperiod_new_infections_prev_locs,
-                                        kernel = q_timeperiod)
+# now we can do the convolution to get the number of detectable infections, if
+# measured each day
+detectable_infections_daily_prev_locs <- convolve_matrix(
+  matrix = daily_new_infections_prev_locs,
+  kernel = q_timeperiod)
 
+# compute prevalence at these locations over time by dividing by population of
+# the locations where prevalence surveys were done
+population_prev_locs <- pop_all_cells[prev_index]
+prevalence_prev_locs <- sweep(detectable_infections_daily_prev_locs,
+      1, population_prev_locs, FUN = "/")
 ```
 
 Now we model the expected clinical incidence at each pixel, accounting for the prevalence-incidence relationship, delays between infection and reporting, imperfect reporting rates, and aggregating the counts over health facility catchments.
@@ -626,7 +649,9 @@ Now we model the expected clinical incidence at each pixel, accounting for the p
 # We estimate q_star, the integral of the daily detectability function
 q_star <- sum(q_daily(seq(0, q_max_days)))
 
-# As per equations above, we can get the instantaneous prevalence using this, and the provided prevalence-incidence relationship to map to the incidence rate of all clinical cases (reported or not)
+# As per equations above, we can get the instantaneous prevalence using this,
+# and the provided prevalence-incidence relationship to map to the incidence
+# rate of all clinical cases (reported or not)
 g <- data$surveillance_information$prev_inc_function
 clinical_case_incidence <- g(q_star * infection_incidence)
 # multiplying by the reporting rate r gives us the reported clinical incidence rate
@@ -638,7 +663,8 @@ reported_clinical_case_incidence <- r * clinical_case_incidence
 gamma <- reported_clinical_case_incidence / infection_incidence
 reported_clinical_cases <- gamma * timeperiod_new_infections
 
-# note we could also multiply reported_clinical_case_incidence by the populations and the monthly timeperiod
+# note we could also multiply reported_clinical_case_incidence by the
+# populations and the monthly timeperiod
 
 # next, we convolve these through time to account for delays between infection
 # and reporting. This follows the same process as for prevalence:
@@ -660,21 +686,29 @@ timeperiod, in each pixel. Next we need to aggregate them at health facility
 level to link them to the available data.
 
 ```{r health_facility_aggregation}
-# First, we'll need to reproject the catchment model, and then extract all catchment information into a matrix
+# First, we'll need to reproject the catchment model, and then extract all
+# catchment information into a matrix
 catchment_rast_raw <- data$surveillance_information$health_facilities$catchments_rast
 catchment_rast <- terra::project(catchment_rast_raw, new_crs) 
 catchment_weights <- terra::extract(catchment_rast, all_cells)
-# after reprojecting, we will need to ensure that the weights sum to 1 across all rows(pixels), so that the weights are probabilities of attending each health facility. If they don't sum to 1, we'll be losing/adding cases in an unpredictable way
+
+# after reprojecting, we will need to ensure that the weights sum to 1 across
+# all rows(pixels), so that the weights are probabilities of attending each
+# health facility. If they don't sum to 1, we'll be losing/adding cases in an
+# unpredictable way
 catchment_weight_sums <- rowSums(catchment_weights)
 catchment_weights <- sweep(catchment_weights, 1, catchment_weight_sums, FUN = "/")
 
-# now we just need a matrix multiplication to assign the reported cases in each pixel and time to health facility level, resulting in a matrix with rows giving health facilities and columns giving time periods 
+# now we just need a matrix multiplication to assign the reported cases in each
+# pixel and time to health facility level, resulting in a matrix with rows
+# giving health facilities and columns giving time periods
 reported_clinical_cases_hf <- t(catchment_weights) %*% reported_clinical_cases_shifted
 ```
 
 Now we define likelihoods for the two types of observation data. First we define the likelihood for prevalence survey data by extracting the prevalence values from the modelled timeseries, at the times and locations where the surveys were performed.
 ```{r prevalence_likelihood}
-# Now we find the timeperiod in which each survey was done, and extract the corresponding prevalence estimates
+# Now we find the timeperiod in which each survey was done, and extract the
+# corresponding prevalence estimates
 n_surveys <- nrow(data$epi_data$prevalence_surveys)
 idx <- cbind(
   seq_len(n_surveys), # rows
@@ -683,7 +717,8 @@ idx <- cbind(
 
 prevalence_estimates <- prevalence_prev_locs[idx]
 
-# now we can define a binomial likelihood over the data for this part of the model
+# now we can define a binomial likelihood over the data for this part of the
+# model
 positive <- data$epi_data$prevalence_surveys$n_positive
 tested <- data$epi_data$prevalence_surveys$n_sampled
 distribution(positive) <- binomial(tested, prevalence_estimates)
@@ -714,18 +749,44 @@ Now we have defined all of the components of the model, we can run MCMC to estim
 In general, it would be a good idea to use calculate to simulate some of these quantities (predicted prevalences etc) from the priors, to make sure they are somewhat reasonable, and there are no numerical issues or mistakes in the model code. I'll skip that for now in this example, since the model has already been checked.
 
 ```{r run_mcmc}
-# list only the quantitites/parameters we want to trace the posteriors for in the first instance. We can always recompute other quantities later, so keep this to the hyperparameters.
+# list only the quantitites/parameters we want to trace the posteriors for in
+# the first instance. We can always recompute other quantities later, so keep
+# this to the hyperparameters.
 m <- model(
   alpha, beta,
   r,
   phi, theta, sigma
 )
 
-draws <- mcmc(m)
+# load the latent white noise variable for the space time process into this
+# environment so we can set initial values for them
+v <- attr(epsilon, "v")
+
+# the model has trouble initialising when the infection incidence is high
+# (because the number of people detectable in the prevalence surveys can exceed
+# the population), so initialise it to be low
+
+# later: work out how to cap it without ruining the gradients
+n_chains <- 4
+inits <- replicate(n_chains,
+                   initials(
+                     alpha = runif(1, -10, -9),
+                     beta = rep(0, length(beta)),
+                     v = array(0, dim(v))
+                   ),
+                   simplify = FALSE)
+
+# sim <- calculate(prevalence_estimates,
+#                  cases_expected,
+#                  nsim = 1,
+#                  values = inits[[1]])
+# summary(sim$prevalence_estimates)
+# summary(sim$cases_expected)
+
+draws <- mcmc(m, 
+              initial_values = inits)
 
 ```
-
-Run MCMC
 
 Make pixel-level posterior prediction maps of infection incidence, clinical incidence, prevalence
 
