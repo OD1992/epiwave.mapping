@@ -188,17 +188,17 @@ First we load the bioclim covariates using the `terra` and `geodata` R package:
 ```{r bioclim, eval = FALSE}
 library(terra)
 library(geodata)
-# download at a half-degree resolution. See ?geodata_path for how to save the data between sessions
+# download at a five-degree resolution. See ?geodata_path for how to save the data between sessions
 bioclim_kenya <- geodata::worldclim_country(
   country = "KEN",
   var = "bio",
-  res = 0.5,
+  res = 5,
   path = file.path(tempdir(), "bioclim")
 )
 
 pop <- geodata::population(
   year = 2020,
-  res = 0.5,
+  res = 5,
   path = file.path(tempdir(), "population")
 )
 
@@ -590,7 +590,7 @@ Note that we can similarly simulate other objects like `timeperiod_new_infection
 
 Next we will compute the expected prevalence at our prevalence survey locations. We need to find the index to the rows in `timeperiod_new_infections` where the prevalence surveys were performed, and then apply the appropriate convolution on these to compute the expeccted prevalences at those times and places.
 
-```{r define prevalence}
+```{r define_prevalence}
 # project the prevalence survey coordinates
 prev_coords <- data$epi_data$prevalence_surveys %>%
   select(x, y) %>%
@@ -600,7 +600,6 @@ prev_coords <- data$epi_data$prevalence_surveys %>%
 prev_cells <- terra::cellFromXY(grid_raster, prev_coords)
 # get the index to rows in our compute objects
 prev_index <- match(prev_cells, all_cells)
-
 
 # pull out the number of infections per timeperiod in these locations
 timeperiod_new_infections_prev_locs <- timeperiod_new_infections[prev_index, ]
@@ -618,14 +617,65 @@ prevalence_prev_locs <- convolve_matrix(timeperiod_new_infections_prev_locs,
 
 ```
 
-Compute expected reported cases at all pixels
+Now we model the expected clinical incidence at each pixel, accounting for the prevalence-incidence relationship, delays between infection and reporting, imperfect reporting rates, and aggregating the counts over health facility catchments.
 
-Aggregate expected reported cases at health facilities
+```{r define_clinical_incidence}
+
+# first, we define gamma: the ratio of clinical cases to infections
+
+# We estimate q_star, the integral of the daily detectability function
+q_star <- sum(q_daily(seq(0, q_max_days)))
+
+# As per equations above, we can get the instantaneous prevalence using this, and the provided prevalence-incidence relationship to map to the incidence rate of all clinical cases (reported or not)
+g <- data$surveillance_information$prev_inc_function
+clinical_case_incidence <- g(q_star * infection_incidence)
+# multiplying by the reporting rate r gives us the reported clinical incidence rate
+reported_clinical_case_incidence <- r * clinical_case_incidence
+
+# to convert this to counts of reported clinical cases per pixel (before
+# temporal convolution), we compute and use gamma like in the above equations,
+# like this:
+gamma <- reported_clinical_case_incidence / infection_incidence
+reported_clinical_cases <- gamma * timeperiod_new_infections
+
+# note we could also multiply reported_clinical_case_incidence by the populations and the monthly timeperiod
+
+# next, we convolve these through time to account for delays between infection
+# and reporting. This follows the same process as for prevalence:
+
+pi_daily <- data$surveillance_information$case_delay_distribution_daily_fun
+pi_max_days <- data$surveillance_information$case_delay_max_days
+pi_timeperiod <- transform_convolution_kernel(kernel_daily = pi_daily,
+                                              max_diff_days = pi_max_days,
+                                              timeperiod_days = timeperiod_days)
+
+# now we can convolve to compute prevalence at all pixels over time
+reported_clinical_cases_shifted <- convolve_matrix(reported_clinical_cases,
+                                        kernel = pi_timeperiod)
+```
+
+
+This gives us the expected number of clinical cases reported in each
+timeperiod, in each pixel. Next we need to aggregate them at health facility
+level to link them to the available data.
+
+```{r health_facility_aggregation}
+# First, we'll need to reproject the catchment model, and then extract all catchment information into a matrix
+catchment_rast_raw <- data$surveillance_information$health_facilities$catchments_rast
+catchment_rast <- terra::project(catchment_rast_raw, new_crs) 
+catchment_weights <- terra::extract(catchment_rast, all_cells)
+# after reprojecting, we will need to ensure that the weights sum to 1 across all rows(pixels), so that the weights are probabilities of attending each health facility. If they don't sum to 1, we'll be losing/adding cases in an unpredictable way
+catchment_weight_sums <- rowSums(catchment_weights)
+catchment_weights <- sweep(catchment_weights, 1, catchment_weight_sums, FUN = "/")
+
+# now we just need a matrix multiplication to assign the reported cases in each pixel and time to health facility level, resulting in a matrix with rows giving health facilities and columns giving time periods 
+reported_clinical_cases_hf <- t(catchment_weights) %*% reported_clinical_cases_shifted
+```
 
 Now we define likelihoods for the two types of observation data. First we define the likelihood for prevalence survey data by extracting the prevalence values from the modelled timeseries, at the times and locations where the surveys were performed.
 ```{r prevalence_likelihood}
+# Now we find the timeperiod in which each survey was done, and extract the corresponding prevalence estimates
 n_surveys <- nrow(data$epi_data$prevalence_surveys)
-# Now we find the timeperiod in which each survey was done, and extract the corresponding prevalence
 idx <- cbind(
   seq_len(n_surveys), # rows
   data$epi_data$prevalence_surveys$time # columns
@@ -640,8 +690,40 @@ distribution(positive) <- binomial(tested, prevalence_estimates)
 ```
 
 Now we add the likelihood for the clinical cases reported at health facility level, accounting for missingness of data in these timeseries.
+```{r clinical_incidence_likelihood}
+
+# find the non-missing data
+valid_idx <- !is.na(data$epi_data$clinical_cases$cases)
+
+# pull out these places, times, and cases
+cases_valid <- data$epi_data$clinical_cases[valid_idx, ]
+cases_observed <- cases_valid$cases
+
+# extract the corresponding estimates of cases
+cases_extract_index <- cbind(cases_valid$health_facility, cases_valid$time)
+cases_expected <- reported_clinical_cases_hf[cases_extract_index]
+
+# define the poisson observation model
+distribution(cases_observed) <- poisson(cases_expected)
+```
 
 ### Model fitting and prediction
+
+Now we have defined all of the components of the model, we can run MCMC to estimate parameters.
+
+In general, it would be a good idea to use calculate to simulate some of these quantities (predicted prevalences etc) from the priors, to make sure they are somewhat reasonable, and there are no numerical issues or mistakes in the model code. I'll skip that for now in this example, since the model has already been checked.
+
+```{r run_mcmc}
+# list only the quantitites/parameters we want to trace the posteriors for in the first instance. We can always recompute other quantities later, so keep this to the hyperparameters.
+m <- model(
+  alpha, beta,
+  r,
+  phi, theta, sigma
+)
+
+draws <- mcmc(m)
+
+```
 
 Run MCMC
 
