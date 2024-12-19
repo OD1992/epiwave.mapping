@@ -53,13 +53,12 @@ sim_bcb_gp <- function(bcb_setup = bcb_setup,
 # correlation and then return only the elements of the compute grid that were in
 # the original raster
 bcb_gp <- function (v, kernel, bcb_setup) {
-  z_all <- bcb_gp_colour(bcb_setup, v, kernel)
-  z <- bcb_gp_extract(bcb_setup, z_all)
-  z
+  f <- bcb_gp_colour(bcb_setup, v, kernel)
+  bcb_gp_extract(bcb_setup, f)
 }
 
 # do the colouring (applying covariance structure) of the random variables
-bcb_gp_colour <- function (bcb_setup, v_all, kernel) {
+bcb_gp_colour <- function (bcb_setup, v, kernel) {
 
   # apply the greta.gp spatial kernel to the minimal vector of distances (one
   # per gridcell on the torus, so ~4x the number of gridcells in a square region
@@ -71,22 +70,7 @@ bcb_gp_colour <- function (bcb_setup, v_all, kernel) {
   # compute covariance from 0, and then reshape
   covar_vec <- kernel(bcb_setup$dist_vec, 0)
 
-  # if v_all is a list, loop through applying it on the pre-evaluated kernel
-  if (is.list(v_all) && inherits(v_all[[1]], "greta_array")) {
-
-    ans <- lapply(v_all,
-                  function (v) {
-                    spectral_colour(v, covar_vec, bcb_setup)
-                  })
-
-    # otherwise just apply the 'colouring' once
-  } else {
-
-    ans <- spectral_colour(v_all, covar_vec, bcb_setup)
-
-  }
-
-  ans
+  spectral_colour(v, covar_vec, bcb_setup)
 
 }
 
@@ -179,20 +163,9 @@ tf_spectral_colour <- function (v, covar_vec, bcb_setup) {
 
 # given the bcb setup information and the full coloured random variables,
 # extract only those the user wants
-bcb_gp_extract <- function (bcb_setup, z) {
+bcb_gp_extract <- function (bcb_setup, f) {
 
-  # vectorisation by recursion(!)
-  if (is.list(z) && inherits(z[[1]], "greta_array")) {
-
-    ans <- lapply(z, function (z) bcb_gp_extract(bcb_setup, z))
-
-  } else {
-
-    ans <- z[bcb_setup$extract_index_vec, ]
-
-  }
-
-  ans
+    f[bcb_setup$extract_index_vec, ]
 
 }
 
