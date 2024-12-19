@@ -411,25 +411,16 @@ ggplot(
 
 ### Model specification using greta
 
-To specify the model in greta, first we define all free model hyperparameters (ie. all parameters except for the spatiotemporal random effects `epsilon`). Here we use an arbitrary set of priors, that happen to be those used to simulate the 'true' parameters in `epiwave.mapping::sim_data()`. In a practical application, the user should give these a lot more thought. 
-```{r define_priors}
-library(greta)
+To specify the model in greta, first we define the model hyperparameters with priors, then we create any random effects (here the spatiotemporal random effects `epsilon`) and other model objects that depend on them. Then we can define the observation model - linking our generative model to data. 
 
-# intercept and slope for fixed-effects terms on daily infection incidence
-alpha <- normal(log(1e-4), 1)
-beta <- normal(0, 1, dim = terra::nlyr(covariates_lores))
-# fraction of all clinical cases reported in case counts
-r <- beta(10, 5)
-```
-
-We can use functions from `epiwave.mapping` to define the model for the spatio-temporal random effect epsilon, using the block-circulant basis approach. To do so, we first need to ensure that the raster we use to define this computational setup is appropriately projected, so that we can make a reasonable assumption that the grid of cells is regularly spaced in both dimensions:
+First we will define the hyperparameters and spatio-temporal process structure and for the spatio-temporal random effects epsilon. We start by setting up the objects needed for the computaitonally efficient block-circulant embedding approach to spatial GP simulation. To do so, we first need to ensure that the raster we use to define this computational setup is appropriately projected, so that we can make a reasonable assumption that the grid of cells is regularly spaced in both dimensions:
 
 ```{r project_rasters}
 # define a mask raster - 0 in land cells, NA elsewhere
 kenya_mask_lores <- pop_kenya_lores * 0
 names(kenya_mask_lores) <- NULL
 
-# Pick projectionas UTM zone 36S (Uganda, Kenya, Tanzania)
+# Pick projection as UTM zone 36S (Uganda, Kenya, Tanzania)
 new_crs <- "epsg:21036"
 
 # project the raster to set up our grid
@@ -437,6 +428,9 @@ grid_raster <- terra::project(kenya_mask_lores, new_crs)
 
 # also project the covariates
 covariates_raster <- terra::project(covariates_lores, new_crs)
+
+# and the populations
+pop_raster <- terra::project(pop_kenya_lores, new_crs)
 ```
 
 Now we can define the objects required for the block-circulant basis approach to simulating IID Guassian processes over space, and converting them to spatio-temporal Gaussian processes: 
@@ -447,6 +441,7 @@ bcb_setup <- define_bcb_setup(grid_raster)
 
 Now we can define a space-time Gaussian process over `epsilon`, by creating an isotropic spatial kernel object using the greta.gp R package, a parameter for the AR(1) temporal kernel parameter, and a marginal variance parameter, and passing these to the `epiwave.mapping` function `sim_bcb_gp()`. We first need to define priors for the three hyperparameters of the spatio-temporal process. We define a penalised complexity prior (half-normal) for the marginal variance parameter `sigma`, which shrinks the degree of spatio-temporal correlation towards 0. Since we believe negative residual correlation between time periods (oscillation between negative and positive on a monthly timesteps) to be incredibly unlikely, we define a standard uniform prior on the temporal correlation parameter `theta` so that is positive, but otherwise not informative (the spatial pattern could be either constant, or constantly changing). For the spatial range parameter `phi`, we need to take more care to consider reasonable values in terms of the units of the map (metres). We set up an informative prior to control both the lower and the upper tail of the `phi` - making very short and very long lengthscales (very short-range and long-range spatial correlations) *a priori* unlikely. This helps to resolve the various types of non-identifiability inherent in model-based geostatistics: between the lengthscale and marginal variance parameters, between shorter lengthscales and the spatial covariate parameters `beta` (spatial confounding), and between longer lengthscales and the intercept parameter `alpha`. We do so, by having the user specify upper and lower bounds on the degree of spatial correlation that would be plausible, in terms of the spatial extent of the country under consideration.
 ```{r define_gp, eval = FALSE}
+library(greta)
 library(greta.gp)
 
 # Variance of space-time process shrunk towards 0
@@ -555,16 +550,27 @@ for (sim in 2:n_sims) {
 }
 combined_plot
 ```
+You can run that block multiple times to see different realisations, and check they conform to you prior expectation about the spatio-temporal random process.
 
-Now we have the object or the spatio-temporal random effects, and all our other parameters, we can define the deterministic mapping from these, through infection incidence, to our observed data. First we compute the daily incidence of new infections, per cell, per timestep.
+Now we have the object for the spatio-temporal random effects, we define our remaining hyperparameters for the covariate effects, and reporting fraction.
 
+Here we use an arbitrary set of priors, that happen to be those used to simulate the 'true' parameters in `epiwave.mapping::sim_data()`. In a practical application, the user should give these a lot more thought. 
+```{r define_priors}
+# intercept and slope for fixed-effects terms on daily infection incidence
+alpha <- normal(log(1e-4), 1)
+beta <- normal(0, 1, dim = terra::nlyr(covariates_raster))
+# fraction of all clinical cases reported in case counts
+r <- beta(10, 5)
+```
+
+Then we can define the deterministic mapping from these, through infection incidence, to our observed data. First we compute the daily incidence of new infections, per cell, per timestep.
 ```{r define_infection_incidence, eval = FALSE}
 
 # get an index to all pixel values
-all_cells <- terra::cells(kenya_mask_lores)
+all_cells <- terra::cells(grid_raster)
 
 # extract the covariate design matrix (scale)
-X <- extract(covariates_lores, all_cells)
+X <- terra::extract(covariates_raster, all_cells)
 
 # matrix-multiply with beta, and add alpha, to get the spatial fixed effects
 fixef <- alpha + X %*% beta
@@ -575,10 +581,13 @@ infection_incidence <- ilogit(eta)
 
 # multiply by population and timeperiod to get the count of new infections per time period
 timeperiod_days <- 365/12
-pop_all_cells <- extract(pop_kenya_lores, all_cells)
+pop_all_cells <- terra::extract(pop_raster, all_cells)[[1]]
 
-new_infections <- infection_incidence * pop_all_cells * timeperiod_days
+daily_new_infections <- sweep(infection_incidence, 1, pop_all_cells, FUN = "*")
+timeperiod_new_infections <- daily_new_infections * timeperiod_days
 ```   
+
+Note that we can similarly simulate other objects like `timeperiod_new_infections` from the model priors and plot them as rasters to check the model and prior specification seems reasonable.
 
 Compute expected prevalence at prevalence survey locations
 
