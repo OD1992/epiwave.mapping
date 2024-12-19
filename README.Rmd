@@ -586,16 +586,60 @@ pop_all_cells <- terra::extract(pop_raster, all_cells)[[1]]
 daily_new_infections <- sweep(infection_incidence, 1, pop_all_cells, FUN = "*")
 timeperiod_new_infections <- daily_new_infections * timeperiod_days
 ```   
-
 Note that we can similarly simulate other objects like `timeperiod_new_infections` from the model priors and plot them as rasters to check the model and prior specification seems reasonable.
 
-Compute expected prevalence at prevalence survey locations
+Next we will compute the expected prevalence at our prevalence survey locations. We need to find the index to the rows in `timeperiod_new_infections` where the prevalence surveys were performed, and then apply the appropriate convolution on these to compute the expeccted prevalences at those times and places.
+
+```{r define prevalence}
+# project the prevalence survey coordinates
+prev_coords <- data$epi_data$prevalence_surveys %>%
+  select(x, y) %>%
+  as.matrix() %>%
+  terra::project(from = crs(kenya_mask), to = new_crs)
+# find an index to the cells in the full grid
+prev_cells <- terra::cellFromXY(grid_raster, prev_coords)
+# get the index to rows in our compute objects
+prev_index <- match(prev_cells, all_cells)
+
+
+# pull out the number of infections per timeperiod in these locations
+timeperiod_new_infections_prev_locs <- timeperiod_new_infections[prev_index, ]
+
+# now to do the convolution, we first need to translate the detectability function from a daily timestep to our monthly timestep
+q_daily <- data$surveillance_information$prev_detectability_daily_fun
+q_max_days <- data$surveillance_information$prev_detectability_max_days
+q_timeperiod <- transform_convolution_kernel(kernel_daily = q_daily,
+                                  max_diff_days = q_max_days,
+                                  timeperiod_days = timeperiod_days)
+
+# now we can do the convolution to compute prevalence at these locations over time
+prevalence_prev_locs <- convolve_matrix(timeperiod_new_infections_prev_locs,
+                                        kernel = q_timeperiod)
+
+```
 
 Compute expected reported cases at all pixels
 
 Aggregate expected reported cases at health facilities
 
-Define likelihoods - accounting for missingness in clinical cases
+Now we define likelihoods for the two types of observation data. First we define the likelihood for prevalence survey data by extracting the prevalence values from the modelled timeseries, at the times and locations where the surveys were performed.
+```{r prevalence_likelihood}
+n_surveys <- nrow(data$epi_data$prevalence_surveys)
+# Now we find the timeperiod in which each survey was done, and extract the corresponding prevalence
+idx <- cbind(
+  seq_len(n_surveys), # rows
+  data$epi_data$prevalence_surveys$time # columns
+)
+
+prevalence_estimates <- prevalence_prev_locs[idx]
+
+# now we can define a binomial likelihood over the data for this part of the model
+positive <- data$epi_data$prevalence_surveys$n_positive
+tested <- data$epi_data$prevalence_surveys$n_sampled
+distribution(positive) <- binomial(tested, prevalence_estimates)
+```
+
+Now we add the likelihood for the clinical cases reported at health facility level, accounting for missingness of data in these timeseries.
 
 ### Model fitting and prediction
 
