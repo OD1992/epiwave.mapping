@@ -211,7 +211,7 @@ pop_kenya <- mask(pop, bioclim_kenya)
 
 ```
 
-```{r bioclim_secret, eval = TRUE, echo = FALSE}
+```{r bioclim_secret, echo = FALSE}
 library(terra)
 library(geodata)
 # I'm on a plane writing this, so mocking up the chunk with a file I know I have
@@ -541,24 +541,24 @@ phi <- gamma(shape = gamma_prior_params$shape,
 
 ```
 
-To use the block-circulant approach we need to define a spatial kernel in greta.gp, with only a single lengthscale parameter, and pass this to `epiwave.mapping::sim_gp_bcb()` along with our setup for the BCB approach.
+To use the block-circulant approach we need to define a spatial kernel in greta.gp, with only a single lengthscale parameter, and pass this to `epiwave.mapping::sim_gp_bcb()` along with our setup for the BCB approach. I've commented this out (as well as not evaluating the block), since running this block in addition. to the sparse approach we use below will make the model run very slowly.
 
 ```{r define_epsilon_bcb, eval = FALSE}
-# We define an isotropic kernel in greta.gp. We fix the variance of this
-# kernel to 1, since we define that parameter at the level of the combined
-# space-time kernel
-k_space <- mat52(lengthscales = phi,
-                 variance = 1)
-
-# Now we can pass this kernel and the other hyperparameters to the function to
-# create space-time GPs over all cells
-epsilon <- sim_gp_bcb(
-  bcb_setup = bcb_setup,
-  n_times = n_years * 12,
-  space_kernel = k_space,
-  time_correlation = theta,
-  sigma = sigma
-)
+# # We define an isotropic kernel in greta.gp. We fix the variance of this
+# # kernel to 1, since we define that parameter at the level of the combined
+# # space-time kernel
+# k_space <- mat52(lengthscales = phi,
+#                  variance = 1)
+# 
+# # Now we can pass this kernel and the other hyperparameters to the function to
+# # create space-time GPs over all cells
+# epsilon <- epiwave.mapping::sim_gp_bcb(
+#   bcb_setup = bcb_setup,
+#   n_times = n_years * 12,
+#   space_kernel = k_space,
+#   time_correlation = theta,
+#   sigma = sigma
+# )
 ```
 
 Alternatively, we can construct the space-time process using a sparse GP with `epiwave.mapping::sim_gp_sparse()`. In this case (*for reasons*), to specify an isotropic spatial kernel we need to pass the lengthscale parameter to the `greta.gp` kernel function twice, once for each dimension:
@@ -567,7 +567,7 @@ Alternatively, we can construct the space-time process using a sparse GP with `e
 k_space <- mat52(lengthscales = c(phi, phi),
                  variance = 1)
 
-epsilon <- sim_gp_sparse(
+epsilon <- epiwave.mapping::sim_gp_sparse(
   inducing_points = inducing,
   grid_raster = grid_raster,
   n_times = n_years * 12,
@@ -642,7 +642,7 @@ r <- beta(10, 5)
 ```
 
 Then we can define the deterministic mapping from these, through infection incidence, to our observed data. First we compute the daily incidence of new infections, per cell, per timestep.
-```{r define_infection_incidence, eval = FALSE}
+```{r define_infection_incidence}
 
 # get an index to all pixel values
 all_cells <- terra::cells(grid_raster)
@@ -946,9 +946,7 @@ clinical_cases_truth_plot <- ggplot() +
 clinical_cases_truth_plot / infection_incidence_truth_plot
 ```
 
-
 We can also compare the posterior estimates of the hyperparameters against their true values in the simulation
-
 ```{r compare_params}
 
 # get true values

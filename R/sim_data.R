@@ -46,7 +46,7 @@ sim_data <- function(covariates_rast,
   r <- rbeta(1, 10, 5)
   sigma <- rbeta(1, 12, 8)
   phi_raw <- rbeta(1, 10, 40)
-  theta <- rbeta(1, 39, 1)
+  theta <- rbeta(1, 30, 10)
 
   # interpret phi_raw as the lengthscale in units of the maximum
   # dimension of the raster.
