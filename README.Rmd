@@ -23,7 +23,7 @@ knitr::opts_chunk$set(
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
 <!-- badges: end -->
 
-Prototype R package and example code for computationall-yefficient, fully-Bayesian semi-mechanistic spatio-temporal mapping of disease infection incidence simultaneously from spatially-aggregated (e.g. at health facility level) clinical case count timeseries, and targeted infection prevalence surveys at specific point locations. This model and software is based on ideas in the epiwave R package and uses some functions implemented there, but it currently relies on the user to develop their own model using the greta R package, rather than providing wrapper functions to set up the model for the user.
+Prototype R package and example code for computationally efficient, fully Bayesian semimechanistic spatio-temporal mapping of disease infection incidence simultaneously from spatially-aggregated (e.g. at health facility level) clinical case count timeseries, and targeted infection prevalence surveys at specific point locations. This model and software is based on ideas in the epiwave R package and uses some functions implemented there, but it currently relies on the user to develop their own model using the greta R package, rather than providing wrapper functions to set up the model for the user.
 
 ## Installation
 
@@ -42,7 +42,9 @@ Our main aim is to model, and generate spatio-temporal predictive maps of, varia
 
 - **Infection prevalence survey points**: Random samples of individuals at a specific point location, with the number tested and number positive recorded. Typically these data are available only very infrequently.
 
-Since neither datastream provides a direct estimate of infection incidence, we model the generative observation process yielding each datastream, using informative priors for key parameters wherever possible. A number of options are available for computationally-efficient space-time Gaussian process (GP) modelling for applications of this type. Below we implement an approach well-suited to our health facility catchment observation model and fully Bayesian inference using Hamiltonian Monte Carlo: a separable space-time GP employing a block-circulant embedding for the spatial process. This is similar to the approach used in the `lgcp` R package, and detailed in Diggle et al. (2013). We note that the clinical incidence observation model we employ is a particular case of a Log-Gaussian Cox process. Our contribution is accounting for delays in reporting, and linking model this to prevalence survey data, in a practical and easily-extensible framework.
+Since neither datastream provides a direct estimate of infection incidence, we model the generative observation process yielding each datastream, using informative priors for key parameters wherever possible. In order to model the full spatial process generating these data, the model requires estimation of the infection incidence across every pixel in a raster grid covering the region of interest - incidence across all cells is aggregated-up to compute the catchment-level case counts. In this way, the model fully accounts for spatial variation in environmental conditions (represented by regression against environmental predictors) and in the residual space-time process across all cells. This model structure leads to a non-linear and non-factorising likelihood which negates many of the computational tricks used in the INLA software for fitting geostatistical models that can be structured as Gaussian Markov random fields. Instead we employ fully Bayesian inference using Hamiltonian Monte Carlo (providing significant flexibility in model specification) and computational approximations to evaluating the Gaussian process across the entire spatial extent, of which a number of options are available.
+
+Below illustrate two methods suited to mapping a separable space-time Gaussian process: simulation with a block-circulant embedding, and with a sparse Gaussian process approximation. The former is similar to the approach used in the `lgcp` R package, and detailed in Diggle et al. (2013). We note that the clinical incidence observation model we employ is a particular case of a Log-Gaussian Cox process. Our contribution is accounting for delays in reporting, and linking model this to prevalence survey data, in a practical and easily-extensible framework.
 
 ### Clinical incidence model 
 
@@ -172,11 +174,13 @@ This discrete convolutions (weighted sums over previous time points) used to com
 
 ### Gaussian process simulation
 
-Naive implementation of the full Gaussian process (GP) model is typically very computationally intensive, due to the fact that the most expensive step (inverting a dense covariance matrix) scales cubically with the number of evaluation points. In the model we propose (and as in a Log-Gaussian Cox process), we need to evaluate the GP at every pixel location and time period in the study frame, so that we can aggregate the expected clinical case count to compute the likelihood. This results in a computationally impractical algorithm for all but the smallest study frames.
+Naive implementation of the full Gaussian process (GP) model is typically very computationally intensive, due to the fact that the most expensive step (inverting a dense covariance matrix) scales cubically with the number of evaluation points. In the model we propose (and as in a Log-Gaussian Cox process), we need to evaluate the GP at every pixel location and time period in the study frame, so that we can aggregate the expected clinical case count to compute the likelihood. This results in a computationally impractical algorithm for all but the smallest study frames. Some form of computational approximation is required.
 
-One solution would be to employ an approximation to the full GP, evaluated at only a subset of locations and times in the study frame, and approximating the clinical case count calculation with some smaller finite sum. Candidate GP approximation approaches include the SPDE approximation to a Matern-type spatial kernel, on a computational mesh (as used in INLA, Lindgren *et al.*, 2011), a sparse GP method over a limited set of inducing points (Quinonera-Candela *et al.*, ?; see `greta.gp`), or one of the closely-related penalised spline methods (see `greta.gam`).
+One straightforward approximation would be to employ a full (non-approximate) GP, but to evaluate the combined process (GP and fixed effects regression) at only a subset of locations and times in the study frame and then to approximate the health-facility level clinical case count calculation (a set of integrals over space) with some smaller finite sum. Whilst general, this would also result in an approximation to the fixed-effects environmental regression part of the model. While the GP could feasibly be smooth and well approximated in this way, the environmental covariates are likely to be more complex and thus potentially quite poorly approximated by a finite sum.
 
-An appealing alternative in this case is to compute the full spatial GP for every pixel in a regular grid (the same we use to record spatial covariate values), by exploiting the block-circulant structure in the resulting spatial covariance matrix. This requires using projected coordinates, and expanding the spatial study frame (by a factor of 2 in each dimension) to map the projection onto a torus in such a way that the distances between pairs of pixels are preserved. This approach enables simulation of the GP across all pixels, for a given time period, via the fast fourier transform (FFT) - which scales only linearly with the number of locations considered (? check when have wifi). This enables us to simulate values of the spatial GP across all pixels very cheaply, with no need to approximate the GP. In separable combination with a Markovian temporl kernel, this enables very rapid inference. 
+An alternative approach would be to evaluate the GP and the fixed effects at all pixels, but to replace the full GP with an approximation. Candidate GP approximation approaches include the SPDE approximation to a Matern-type spatial kernel, on a computational mesh (as used in INLA, [Lindgren *et al.*, 2011](https://doi.org/10.1111/j.1467-9868.2011.00777.x)), a sparse GP method over a limited set of inducing points ([Quinonera-Candela & Rasmussen, 2005](https://jmlr.org/papers/v6/quinonero-candela05a.html) - see `greta.gp` and note the similarity to a Guassian predictive process per [Banerjee *et al.*, 2009](https://doi.org/10.1111/j.1467-9868.2008.00663.x)), or one of the closely-related penalised spline methods (see `greta.gam`). Implementation of the SPDE approximation in an HMC setting requires implementation of sparse matrix methods adapted to automatic differentiation ([Durrande *et al.* 2019](https://doi.org/10.48550/arXiv.1902.10078), greta version in development), but would likely be preferable where the underlying Gaussian process has short lengthscale. In the case of a comparatively smooth underlying GP, the sparse o spline-based methods are likely to be a better fit, since they have lower computational complexity in this case. Given the spatially-aggregated observation model, it seems likely that only comparatively smooth GP realisations could be identified in this model, and therefore favour sparse or spline methods. 
+
+An appealing third alternative in this case is to compute the full spatial GP for every pixel in a regular grid (the same we use to record spatial covariate values), by exploiting the block-circulant structure in the resulting spatial covariance matrix. This requires using projected coordinates, and expanding the spatial study frame (by a factor of 2 in each dimension) to map the projection onto a torus in such a way that the distances between pairs of pixels are preserved. This approach enables simulation of the GP across all pixels, for a given time period, via the fast fourier transform (FFT) - which scales only linearly with the number of locations considered (? check when have wifi). This enables us to simulate values of the spatial GP across all pixels very cheaply, with no need to approximate the GP. In separable combination with a Markovian temporal kernel, this enables very rapid inference. However the very large number of random variables required to be sampled (at least four times as many as pixels and time points under study) leads to a very large parameter space for sampling, and can slow down efficient MCMC sampling considerably.
 
 ## Example application
 
@@ -413,7 +417,9 @@ ggplot(
 
 To specify the model in greta, first we define the model hyperparameters with priors, then we create any random effects (here the spatiotemporal random effects `epsilon`) and other model objects that depend on them. Then we can define the observation model - linking our generative model to data. 
 
-First we will define the hyperparameters and spatio-temporal process structure and for the spatio-temporal random effects epsilon. We start by setting up the objects needed for the computaitonally efficient block-circulant embedding approach to spatial GP simulation. To do so, we first need to ensure that the raster we use to define this computational setup is appropriately projected, so that we can make a reasonable assumption that the grid of cells is regularly spaced in both dimensions:
+First we will define the hyperparameters and spatio-temporal process structure and for the spatio-temporal random effects epsilon. We provide two options: the block-circulant embedding approach, and the sparse GP approach, and we demonstrate how to set up objects for both.
+
+For the block circulant embedding approach, we first need to ensure that the raster we use to define this computational setup is appropriately projected, so that we can make a reasonable assumption that the grid of cells is regularly spaced in both dimensions:
 
 ```{r project_rasters}
 # define a mask raster - 0 in land cells, NA elsewhere
@@ -435,12 +441,54 @@ pop_raster <- terra::project(pop_kenya_lores, new_crs)
 
 Now we can define the objects required for the block-circulant basis approach to simulating IID Guassian processes over space, and converting them to spatio-temporal Gaussian processes: 
 
-```{r define_bcb, eval = FALSE}
+```{r define_bcb}
 bcb_setup <- define_bcb_setup(grid_raster)
 ```
 
-Now we can define a space-time Gaussian process over `epsilon`, by creating an isotropic spatial kernel object using the greta.gp R package, a parameter for the AR(1) temporal kernel parameter, and a marginal variance parameter, and passing these to the `epiwave.mapping` function `sim_bcb_gp()`. We first need to define priors for the three hyperparameters of the spatio-temporal process. We define a penalised complexity prior (half-normal) for the marginal variance parameter `sigma`, which shrinks the degree of spatio-temporal correlation towards 0. Since we believe negative residual correlation between time periods (oscillation between negative and positive on a monthly timesteps) to be incredibly unlikely, we define a standard uniform prior on the temporal correlation parameter `theta` so that is positive, but otherwise not informative (the spatial pattern could be either constant, or constantly changing). For the spatial range parameter `phi`, we need to take more care to consider reasonable values in terms of the units of the map (metres). We set up an informative prior to control both the lower and the upper tail of the `phi` - making very short and very long lengthscales (very short-range and long-range spatial correlations) *a priori* unlikely. This helps to resolve the various types of non-identifiability inherent in model-based geostatistics: between the lengthscale and marginal variance parameters, between shorter lengthscales and the spatial covariate parameters `beta` (spatial confounding), and between longer lengthscales and the intercept parameter `alpha`. We do so, by having the user specify upper and lower bounds on the degree of spatial correlation that would be plausible, in terms of the spatial extent of the country under consideration.
-```{r define_gp, eval = FALSE}
+For the sparse GP approach, we instead need to construct a set of spatial 'inducing points' or 'knots' across the region of interest. The number of inducing points controls the accuracy of the approximation - with one inducing point per pixel, this is no longer an approximation. An insufficient number of inducing points will bias inference towards smoother Gaussian processes, though trial and error is required to ensure the inducing point scheme is sufficient to accurately capture the underlying process. For now, we will use a small number of points. We generate points evenly across space in a somewhat ad-hoc way using kmeans clustering. Note that improved efficiency of the approximation could be achieved by weighting inducing points towards more populous areas.
+
+```{r define_inducing}
+n_inducing <- 30
+pts_sim <- terra::spatSample(grid_raster,
+                             n_inducing * 1e3,
+                             replace = TRUE,
+                             xy = TRUE,
+                             values = FALSE,
+                             na.rm = TRUE)
+                  
+inducing <- kmeans(pts_sim, n_inducing)$centers
+```
+
+We can plot these to see where they fall and check their coverage:
+
+```{r plot_inducing}
+# plot the health facility locations
+ggplot() +
+  geom_spatraster(data = pop_raster) +
+  scale_fill_gradient(
+    low = grey(0.9),
+    high = grey(0.6),
+    transform = "log1p",
+    na.value = "transparent",
+    guide = "none") +
+  geom_point(
+    aes(
+      y = y,
+      x = x
+    ),
+    data = inducing,
+    shape = 16
+  ) +
+  xlab("") +
+  ylab("") +
+  theme_minimal() +
+  ggtitle("Inducing point locations")
+```
+
+Now we can define a space-time Gaussian process over `epsilon`, by creating an isotropic spatial kernel object using the greta.gp R package, a parameter for the AR(1) temporal kernel parameter, and a marginal variance parameter, and passing these to the `epiwave.mapping` functions `sim_gp_bcb()` (for the block-circulant embedding) or `sim_gp_sparse()`.
+
+We first need to define priors for the three hyperparameters of the spatio-temporal process. We define a penalised complexity prior (half-normal) for the marginal variance parameter `sigma`, which shrinks the degree of spatio-temporal correlation towards 0. Since we believe negative residual correlation between time periods (oscillation between negative and positive on a monthly timesteps) to be incredibly unlikely, we define a standard uniform prior on the temporal correlation parameter `theta` so that is positive, but otherwise not informative (the spatial pattern could be either constant, or constantly changing). For the spatial range parameter `phi`, we need to take more care to consider reasonable values in terms of the units of the map (metres). We set up an informative prior to control both the lower and the upper tail of the `phi` - making very short and very long lengthscales (very short-range and long-range spatial correlations) *a priori* unlikely. This helps to resolve the various types of non-identifiability inherent in model-based geostatistics: between the lengthscale and marginal variance parameters, between shorter lengthscales and the spatial covariate parameters `beta` (spatial confounding), and between longer lengthscales and the intercept parameter `alpha`. We do so, by having the user specify upper and lower bounds on the degree of spatial correlation that would be plausible, in terms of the spatial extent of the country under consideration.
+```{r spatial_priors}
 library(greta)
 library(greta.gp)
 
@@ -496,6 +544,11 @@ gamma_prior_params <- find_gamma_parameters(upper_value = phi_upper,
 phi <- gamma(shape = gamma_prior_params$shape,
              rate = gamma_prior_params$rate)
 
+```
+
+To use the block-circulant approach we need to define a spatial kernel in greta.gp, with only a single lengthscale parameter, and pass this to `epiwave.mapping::sim_gp_bcb()` along with our setup for the BCB approach.
+
+```{r define_epsilon_bcb, eval = FALSE}
 # We define an isotropic kernel in greta.gp. We fix the variance of this
 # kernel to 1, since we define that parameter at the level of the combined
 # space-time kernel
@@ -504,8 +557,24 @@ k_space <- mat52(lengthscales = phi,
 
 # Now we can pass this kernel and the other hyperparameters to the function to
 # create space-time GPs over all cells
-epsilon <- sim_bcb_gp(
+epsilon <- sim_gp_bcb(
   bcb_setup = bcb_setup,
+  n_times = n_years * 12,
+  space_kernel = k_space,
+  time_correlation = theta,
+  sigma = sigma
+)
+```
+
+Alternatively, we can construct the space-time process using a sparse GP with `epiwave.mapping::sim_gp_sparse()`. In this case (*for reasons*), to specify an isotropic spatial kernel we need to pass the lengthscale parameter to the `greta.gp` kernel function twice, once for each dimension:
+```{r define_epsilon_sparse}
+# note we pass the lengthscale argument twice
+k_space <- mat52(lengthscales = c(phi, phi),
+                 variance = 1)
+
+epsilon <- sim_gp_sparse(
+  inducing_points = inducing,
+  grid_raster = grid_raster,
   n_times = n_years * 12,
   space_kernel = k_space,
   time_correlation = theta,
@@ -749,7 +818,13 @@ Now we have defined all of the components of the model, we can run MCMC to estim
 In general, it would be a good idea to use calculate to simulate some of these quantities (predicted prevalences etc) from the priors, to make sure they are somewhat reasonable, and there are no numerical issues or mistakes in the model code. I'll skip that for now in this example, since the model has already been checked.
 
 ```{r run_mcmc}
-# list only the quantitites/parameters we want to trace the posteriors for in
+
+# load the latent white noise variable for the space time process into this
+# environment so we can set initial values for them
+v <- attr(epsilon, "v")
+
+
+# list only the quantities/parameters we want to trace the posteriors for in
 # the first instance. We can always recompute other quantities later, so keep
 # this to the hyperparameters.
 m <- model(
@@ -758,9 +833,6 @@ m <- model(
   phi, theta, sigma
 )
 
-# load the latent white noise variable for the space time process into this
-# environment so we can set initial values for them
-v <- attr(epsilon, "v")
 
 # the model has trouble initialising when the infection incidence is high
 # (because the number of people detectable in the prevalence surveys can exceed
@@ -785,6 +857,8 @@ inits <- replicate(n_chains,
 
 draws <- mcmc(m, 
               initial_values = inits)
+
+r_hats <- coda::gelman.diag(draws, autoburnin = FALSE, multivariate = FALSE)
 
 ```
 

@@ -11,7 +11,7 @@
 #' @return
 #' @author Nick Golding
 #' @export
-sim_bcb_gp <- function(bcb_setup = bcb_setup,
+sim_gp_bcb <- function(bcb_setup = bcb_setup,
                        space_kernel,
                        sigma = 1,
                        n_times = 1,
