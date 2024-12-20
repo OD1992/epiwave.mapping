@@ -855,6 +855,7 @@ infection_incidence_post_mean <- apply(posterior_sims$infection_incidence, 2:3, 
 clinical_cases_pixel_post_mean <- apply(posterior_sims$clinical_cases_pixel, 2:3, mean)
 
 # now we can put these in rasters
+n_times <- ncol(infection_incidence)
 plot_raster <- do.call(c,
                        replicate(n_times,
                                  grid_raster,
@@ -886,7 +887,7 @@ infection_incidence_plot <- ggplot() +
             "per person per year")
 
 clinical_cases_pixel_plot <- ggplot() +
-    geom_spatraster(data = 365 * clinical_cases_pixel_post_raster[[times_plot]]) +
+    geom_spatraster(data = clinical_cases_pixel_post_raster[[times_plot]]) +
     scale_fill_distiller(
       name = "Cases",
       palette = "YlOrRd",
@@ -905,7 +906,7 @@ clinical_cases_pixel_plot / infection_incidence_plot
 ### Comparison with simulated truth
 
 We can compare these estimates with the 'true' simulated surfaces from the `data` object.
-```{r plot_truth}
+```{r plot_truth, fig.width = 10, fig.height=6}
 infection_incidence_truth_raster <- data$truth$rasters$infection_incidence_rast
 
 clinical_cases_truth_raster <- data$truth$rasters$clinical_cases_rast
@@ -951,13 +952,14 @@ We can also compare the posterior estimates of the hyperparameters against their
 ```{r compare_params}
 
 # get true values
-param_names <- c("alpha", "beta", "phi", "theta", "sigma")
+param_names <- c("alpha", "beta", "r", "phi", "theta", "sigma")
 param_truth <- unlist(data$truth$parameters[param_names])
 
 # compute summaries of parameters in the same order
 param_post <- calculate(
   alpha,
   beta,
+  r,
   phi,
   theta,
   sigma,
@@ -968,16 +970,35 @@ param_post <- calculate(
 param_prior <- calculate(
   alpha,
   beta,
+  r,
   phi,
   theta,
   sigma,
   nsim = 1e3
 )
 
-post_means <- unlist(lapply(param_post, colMeans))
-prior_means <- unlist(lapply(param_prior, colMeans))
+post_mean <- unlist(lapply(param_post, colMeans))
+post_lower <- unlist(lapply(param_post, function(x) apply(x, 2:3, quantile, 0.025)))
+post_upper <- unlist(lapply(param_post, function(x) apply(x, 2:3, quantile, 0.975)))
 
-round(cbind(truth = param_truth,
-      post_mean = post_means,
-      prior_mean = prior_means), 2)
+prior_mean <- unlist(lapply(param_prior, colMeans))
+prior_lower <- unlist(lapply(param_prior, function(x) apply(x, 2:3, quantile, 0.025)))
+prior_upper <- unlist(lapply(param_prior, function(x) apply(x, 2:3, quantile, 0.975)))
+
+tibble(
+  parameter = names(param_truth),
+  truth = round(param_truth, 2),
+  posterior_mean = round(post_mean, 2),
+  posterior_ci = paste(
+    round(post_lower, 1),
+    round(post_upper, 1),
+    sep = " to "
+  ),
+  prior_ci = paste(
+    round(prior_lower, 1),
+    round(prior_upper, 1),
+    sep = " to "
+  ),
+)
+
 ```
