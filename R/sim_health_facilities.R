@@ -18,10 +18,12 @@ sim_health_facilities <- function(population_rast, n_health_facilities) {
   all_coords <- xyFromCell(population_rast, cells(population_rast))
   d <- distance(all_coords,
                 locs,
-                lonlat = TRUE)
+                lonlat = terra::is.lonlat(population_rast))
+
+  max_distance <- max(d)
 
   # model the relative probability of travel there
-  prob <- exp(-d / 1e5)
+  prob <- exp(-d / (max_distance / 10))
   # prob[prob > quantile(prob, 0.5)] <- 0
   weights <- sweep(prob, 1, rowSums(prob), FUN = "/")
 

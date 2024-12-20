@@ -22,12 +22,15 @@ sim_epsilon <- function(template_rast,
   dims <- dim(template_rast)
   y_grid <- seq(ext[3], ext[4], length.out = dims[1])
   x_grid <- seq(ext[1], ext[2], length.out = dims[2])
+
+  # convert phi from the greta definition to fields definition
+  phi_space_fields <- phi_space / (0.5 * sqrt(8 * 2.5))
   cov_setup <- fields::matern.image.cov(
     grid = list(x = x_grid,
                 y = y_grid),
     setup = TRUE,
-    aRange = phi_space,
-    smoothness = 1
+    aRange = phi_space_fields,
+    smoothness = 2.5 # matern 5/2
   )
 
   # empty matrix for random white noise values
