@@ -45,8 +45,16 @@ sim_data <- function(covariates_rast,
   beta <- rnorm(terra::nlyr(covariates_rast))
   r <- rbeta(1, 10, 5)
   sigma <- rbeta(1, 12, 8)
-  phi <- rbeta(1, 20, 20)
+  phi_raw <- rbeta(1, 10, 40)
   theta <- rbeta(1, 39, 1)
+
+  # interpret phi_raw as the lengthscale in units of the maximum
+  # dimension of the raster.
+  grid_extent <- as.vector(ext(population_rast))
+  x_range <- grid_extent["xmax"] - grid_extent["xmin"]
+  y_range <- grid_extent["ymax"] - grid_extent["ymin"]
+  max_distance <- max(x_range, y_range)
+  phi <- phi_raw * max_distance
 
   # simulate infection incidence data
   epsilon <- sim_epsilon(template_rast = population_rast,
@@ -207,7 +215,7 @@ sim_data <- function(covariates_rast,
       parameters = list(
         alpha = alpha,
         beta = beta,
-        gamma = gamma,
+        r = r,
         sigma = sigma,
         phi = phi,
         theta = theta

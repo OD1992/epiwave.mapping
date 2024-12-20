@@ -228,26 +228,43 @@ pop_kenya <- resample(pop_kenya, kenya_mask)
 pop_kenya <- mask(pop_kenya, kenya_mask)
 ```
 
-Now we lower the spatial resolution a little (to make the example run faster) and simulate some fake data, using the first 5 covariates:
-```{r sim_data}
+The Gaussian process implementations we use below assume that the coordinates are on a plane - they don't account for the curvature of the earth (unlike INLA which is able to model GPs on a sphere). We therefore first need to ensure that the raster we use to define this computational setup is appropriately projected. For the block-circulant matrix approach, this is especially important since the computation relies on the compute locations being arranged in a regular gird. We therefore project our matrix to an appropriate projected coordinate reference system:
 
+```{r project_rasters}
+# define a template raster representing our compute grid: 0 in land cells, NA
+# elsewhere
+grid_raster <- pop_kenya * 0
+names(grid_raster) <- NULL
+
+# Pick projection as UTM zone 36S (Uganda, Kenya, Tanzania)
+new_crs <- "epsg:21036"
+
+# project this template raster, the bioclim layers, and the population raster
+grid_raster <- terra::project(grid_raster, new_crs)
+bioclim_kenya <- terra::project(bioclim_kenya, new_crs)
+pop_kenya <- terra::project(pop_kenya, new_crs)
+```
+
+Next we prepare our covariates. We will lower the spatial resolution a little to make the example run faster. This is a good idea when initially setting up and debugging a model, but you'll likely want to increase the spatial resolution later. Then we simulate some fake data, using the first 5 covariates:
+```{r sim_data}
 # aggregate rasters
-bioclim_kenya_lores <- terra::aggregate(bioclim_kenya, 20)
-pop_kenya_lores <- terra::aggregate(pop_kenya, 20)
+grid_raster <- terra::aggregate(grid_raster, 20)
+bioclim_raster <- terra::aggregate(bioclim_kenya, 20)
+pop_raster <- terra::aggregate(pop_kenya, 20)
+
+# subset and scale the bioclim layers to make our covariates
+covariates_raster <- scale(bioclim_raster[[1:5]])
 
 # set time periods
 start_year <- 2020
 n_years <- 3
 
-# subset and scale the bioclim layers to make our covariates
-covariates_lores <- scale(bioclim_kenya_lores[[1:5]])
-
 # simulate fake data
 library(epiwave.mapping)
 set.seed(1)
 data <- sim_data(
-  covariates_rast = covariates_lores,
-  population_rast = pop_kenya_lores, 
+  covariates_rast = covariates_raster,
+  population_rast = pop_raster, 
   years = seq(start_year, start_year + n_years - 1),
   n_health_facilities = 30,
   n_prev_surveys = 15,
@@ -265,7 +282,7 @@ library(tidyterra)
 
 # plot the health facility locations
 ggplot() +
-  geom_spatraster(data = pop_kenya_lores) +
+  geom_spatraster(data = pop_raster) +
   scale_fill_gradient(
     low = grey(0.9),
     high = grey(0.6),
@@ -289,7 +306,6 @@ ggplot() +
 Plot the clinical case timeseries for all health facilities over each year:
 
 ```{r vis_data_2}
-
 # add months and years onto the clinical cases, for plotting
 cases <- data$epi_data$clinical_cases %>%
   mutate(
@@ -327,7 +343,7 @@ prev_surveys <- data$epi_data$prevalence_surveys %>%
   )
 
 ggplot() +
-  geom_spatraster(data = pop_kenya_lores) +
+  geom_spatraster(data = pop_raster) +
   scale_fill_gradient(
     low = grey(0.9),
     high = grey(0.9),
@@ -352,7 +368,6 @@ ggplot() +
   ylab("") +
   theme_minimal() +
   ggtitle("Prevalence surveys")
-
 ```
 
 Plot the fake delay distribution (probability mass function over days) and prevalence survey detectability functions:
@@ -419,27 +434,7 @@ To specify the model in greta, first we define the model hyperparameters with pr
 
 First we will define the hyperparameters and spatio-temporal process structure and for the spatio-temporal random effects epsilon. We provide two options: the block-circulant embedding approach, and the sparse GP approach, and we demonstrate how to set up objects for both.
 
-For the block circulant embedding approach, we first need to ensure that the raster we use to define this computational setup is appropriately projected, so that we can make a reasonable assumption that the grid of cells is regularly spaced in both dimensions:
-
-```{r project_rasters}
-# define a mask raster - 0 in land cells, NA elsewhere
-kenya_mask_lores <- pop_kenya_lores * 0
-names(kenya_mask_lores) <- NULL
-
-# Pick projection as UTM zone 36S (Uganda, Kenya, Tanzania)
-new_crs <- "epsg:21036"
-
-# project the raster to set up our grid
-grid_raster <- terra::project(kenya_mask_lores, new_crs)
-
-# also project the covariates
-covariates_raster <- terra::project(covariates_lores, new_crs)
-
-# and the populations
-pop_raster <- terra::project(pop_kenya_lores, new_crs)
-```
-
-Now we can define the objects required for the block-circulant basis approach to simulating IID Guassian processes over space, and converting them to spatio-temporal Gaussian processes: 
+We can use the `epiwave.mapping::deifne_bcb_setup()` function to define the objects required for the block-circulant basis approach to simulating IID Guassian processes over space, and converting them to spatio-temporal Gaussian processes: 
 
 ```{r define_bcb}
 bcb_setup <- define_bcb_setup(grid_raster)
@@ -675,11 +670,10 @@ Note that we can similarly simulate other objects like `timeperiod_new_infection
 Next we will compute the expected prevalence at our prevalence survey locations. We need to find the index to the rows in `timeperiod_new_infections` where the prevalence surveys were performed, and then apply the appropriate convolution on these to compute the expeccted prevalences at those times and places.
 
 ```{r define_prevalence}
-# project the prevalence survey coordinates
+# get the prevalence survey coordinates (already projected int he same CRS as the rasters)
 prev_coords <- data$epi_data$prevalence_surveys %>%
   select(x, y) %>%
-  as.matrix() %>%
-  terra::project(from = crs(kenya_mask), to = new_crs)
+  as.matrix()
 # find an index to the cells in the full grid
 prev_cells <- terra::cellFromXY(grid_raster, prev_coords)
 # get the index to rows in our compute objects
@@ -712,7 +706,6 @@ prevalence_prev_locs <- sweep(detectable_infections_daily_prev_locs,
 Now we model the expected clinical incidence at each pixel, accounting for the prevalence-incidence relationship, delays between infection and reporting, imperfect reporting rates, and aggregating the counts over health facility catchments.
 
 ```{r define_clinical_incidence}
-
 # first, we define gamma: the ratio of clinical cases to infections
 
 # We estimate q_star, the integral of the daily detectability function
@@ -795,7 +788,6 @@ distribution(positive) <- binomial(tested, prevalence_estimates)
 
 Now we add the likelihood for the clinical cases reported at health facility level, accounting for missingness of data in these timeseries.
 ```{r clinical_incidence_likelihood}
-
 # find the non-missing data
 valid_idx <- !is.na(data$epi_data$clinical_cases$cases)
 
@@ -818,54 +810,174 @@ Now we have defined all of the components of the model, we can run MCMC to estim
 In general, it would be a good idea to use calculate to simulate some of these quantities (predicted prevalences etc) from the priors, to make sure they are somewhat reasonable, and there are no numerical issues or mistakes in the model code. I'll skip that for now in this example, since the model has already been checked.
 
 ```{r run_mcmc}
-
-# load the latent white noise variable for the space time process into this
-# environment so we can set initial values for them
-v <- attr(epsilon, "v")
-
-
-# list only the quantities/parameters we want to trace the posteriors for in
-# the first instance. We can always recompute other quantities later, so keep
-# this to the hyperparameters.
+# list only the quantities/parameters we want to trace the posteriors for in the
+# first instance. We can always recompute other quantities later, so keep this
+# to the hyperparameters.
 m <- model(
   alpha, beta,
   r,
   phi, theta, sigma
 )
 
-
 # the model has trouble initialising when the infection incidence is high
 # (because the number of people detectable in the prevalence surveys can exceed
 # the population), so initialise it to be low
 
-# later: work out how to cap it without ruining the gradients
+# # later: work out how to cap it without ruining the gradients
 n_chains <- 4
 inits <- replicate(n_chains,
                    initials(
-                     alpha = runif(1, -10, -9),
-                     beta = rep(0, length(beta)),
-                     v = array(0, dim(v))
+                     alpha = runif(1, -10, -9)
                    ),
                    simplify = FALSE)
 
-# sim <- calculate(prevalence_estimates,
-#                  cases_expected,
-#                  nsim = 1,
-#                  values = inits[[1]])
-# summary(sim$prevalence_estimates)
-# summary(sim$cases_expected)
-
-draws <- mcmc(m, 
+draws <- mcmc(m,
+              chains = n_chains,
               initial_values = inits)
 
 r_hats <- coda::gelman.diag(draws, autoburnin = FALSE, multivariate = FALSE)
-
 ```
 
-Make pixel-level posterior prediction maps of infection incidence, clinical incidence, prevalence
+Now we have sampled the model, we can plot posterior maps of quantities we are interested in. Here we will the infection incidence rate (annual, per person) and the numbers of clinical cases expected per pixel, per timeperiod. To get posterior samples of quantities of interest for greta arrays we pass the posterior samples to the `values` argument of tha `greta::calculate()` function. Then we summarise these to get the posterior means before putting them in the rasters to visualise them.
+```{r plot_posteriors, fig.width = 10, fig.height=6}
 
-Aggregate these up to district-level posterior summaries
+# first, we calculate the number of clinical cases (reported or otherwise) at the time of reporting, per timeperiod, per pixel
+# clinical_cases_pixel <- reported_clinical_cases_shifted / r
+clinical_cases_pixel <- reported_clinical_cases / r
+
+posterior_sims <- calculate(infection_incidence,
+                            clinical_cases_pixel,
+                            values = draws,
+                            nsim = 1000)
+
+# in these, the first dimension is the posterior sample, the second is the pixel location, and the third is the timeperiod. Sowe calculate the mean across the first dimension
+infection_incidence_post_mean <- apply(posterior_sims$infection_incidence, 2:3, mean)
+clinical_cases_pixel_post_mean <- apply(posterior_sims$clinical_cases_pixel, 2:3, mean)
+
+# now we can put these in rasters
+plot_raster <- do.call(c,
+                       replicate(n_times,
+                                 grid_raster,
+                                 simplify = FALSE))
+names(plot_raster) <- paste("timestep", seq_len(n_times))
+
+infection_incidence_post_raster <- plot_raster
+clinical_cases_pixel_post_raster <- plot_raster
+for (i in seq_len(n_times)) {
+  infection_incidence_post_raster[[i]][all_cells] <- infection_incidence_post_mean[ , i]
+  clinical_cases_pixel_post_raster[[i]][all_cells] <- clinical_cases_pixel_post_mean[ , i]
+}
+
+# plot for 5 timeperiods
+times_plot <- round(seq(1, n_times, length.out = 5))
+
+infection_incidence_plot <- ggplot() +
+    geom_spatraster(data = 365 * infection_incidence_post_raster[[times_plot]]) +
+    scale_fill_distiller(
+      name = "Incidence",
+      palette = "YlGnBu",
+      direction = 1,
+      na.value = "transparent") +
+    facet_wrap(~lyr, nrow = 1) +
+    theme_minimal() +
+    xlab("") +
+    ylab("") +
+    ggtitle("Infection incidence",
+            "per person per year")
+
+clinical_cases_pixel_plot <- ggplot() +
+    geom_spatraster(data = 365 * clinical_cases_pixel_post_raster[[times_plot]]) +
+    scale_fill_distiller(
+      name = "Cases",
+      palette = "YlOrRd",
+      direction = 1,
+      na.value = "transparent") +
+    facet_wrap(~lyr, nrow = 1) +
+    theme_minimal() +
+    xlab("") +
+    ylab("") +
+    ggtitle("Clinical cases",
+            "number per pixel per timeperiod")
+
+clinical_cases_pixel_plot / infection_incidence_plot
+```
 
 ### Comparison with simulated truth
 
-Compare side-by-side with 'true' simulated surfaces from the `data` object
+We can compare these estimates with the 'true' simulated surfaces from the `data` object.
+```{r plot_truth}
+infection_incidence_truth_raster <- data$truth$rasters$infection_incidence_rast
+
+clinical_cases_truth_raster <- data$truth$rasters$clinical_cases_rast
+
+
+# plot for 5 timeperiods
+times_plot <- round(seq(1, n_times, length.out = 5))
+
+infection_incidence_truth_plot <- ggplot() +
+    geom_spatraster(data = 365 * infection_incidence_truth_raster[[times_plot]]) +
+    scale_fill_distiller(
+      name = "Incidence",
+      palette = "YlGnBu",
+      direction = 1,
+      na.value = "transparent") +
+    facet_wrap(~lyr, nrow = 1) +
+    theme_minimal() +
+    xlab("") +
+    ylab("") +
+    ggtitle("Infection incidence",
+            "per person per year")
+
+clinical_cases_truth_plot <- ggplot() +
+    geom_spatraster(data = clinical_cases_truth_raster[[times_plot]]) +
+    scale_fill_distiller(
+      name = "Cases",
+      palette = "YlOrRd",
+      direction = 1,
+      na.value = "transparent") +
+    facet_wrap(~lyr, nrow = 1) +
+    theme_minimal() +
+    xlab("") +
+    ylab("") +
+    ggtitle("Clinical cases",
+            "number per pixel per timeperiod")
+
+clinical_cases_truth_plot / infection_incidence_truth_plot
+```
+
+
+We can also compare the posterior estimates of the hyperparameters against their true values in the simulation
+
+```{r compare_params}
+
+# get true values
+param_names <- c("alpha", "beta", "phi", "theta", "sigma")
+param_truth <- unlist(data$truth$parameters[param_names])
+
+# compute summaries of parameters in the same order
+param_post <- calculate(
+  alpha,
+  beta,
+  phi,
+  theta,
+  sigma,
+  values = draws,
+  nsim = 1e3
+)
+
+param_prior <- calculate(
+  alpha,
+  beta,
+  phi,
+  theta,
+  sigma,
+  nsim = 1e3
+)
+
+post_means <- unlist(lapply(param_post, colMeans))
+prior_means <- unlist(lapply(param_prior, colMeans))
+
+round(cbind(truth = param_truth,
+      post_mean = post_means,
+      prior_mean = prior_means), 2)
+```
