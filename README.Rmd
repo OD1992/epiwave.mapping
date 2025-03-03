@@ -207,7 +207,9 @@ pop <- geodata::population(
 )
 
 # crop and mask to Kenya
-pop_kenya <- mask(pop, bioclim_kenya)
+pop <- crop(pop, bioclim_kenya[[1]]) # added by ODiao
+
+pop_kenya <- mask(pop, bioclim_kenya[[1]])
 
 ```
 
@@ -262,14 +264,17 @@ n_years <- 3
 # simulate fake data
 library(epiwave.mapping)
 set.seed(1)
+
+years <- seq(start_year, start_year + n_years - 1)
+prev_survey_time <- round(length(years) * 12 / 2)
 data <- sim_data(
   covariates_rast = covariates_raster,
   population_rast = pop_raster, 
-  years = seq(start_year, start_year + n_years - 1),
+  years = years,
   n_health_facilities = 30,
   n_prev_surveys = 15,
-  # assume some fraction of case counts are missing
-  case_missingness = 0.3)
+  case_missingness = 0.3, # assume some fraction of case counts are missing
+  prev_survey_time = prev_survey_time)
 ```
 
 Let's visualise the fake data.
