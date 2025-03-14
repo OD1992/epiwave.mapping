@@ -190,71 +190,89 @@ We demonstrate the model with application to mapping the (simulated) infection i
 Define reference image, population and admin masks ----
 ```{r}
 library(raster)
+library(terra)
+library(sf)
 # Country-level shapefiles
 dir_path <- "/mnt/s3/stratification/CountryFolders/Nigeria"
-
 # Raster locations
 raster_dir <- paste0(dir_path,"/Common files/Covariates/1km/")
 
-buffer.image <- raster("/mnt/s3/stratification/CountryFolders/Nigeria/Common files/Population/u5_grid3_1km_new.tif")
+# Country boundries
+shape <- st_read(file.path(dir_path,"Common files/Shapefiles/NGA_LGAs.shp")) 
 
-buffer.image <- crop(buffer.image, raster(paste0(dir_path, "/Common files/Covariates/1km/EVI_v6.2018.Annual.mean.1km.Data.tif")))
-                     
-population   <- getValues(buffer.image)
-# population   <- getValues(buffer.image)*0.16
+# Population under 5 rasterfile cropped and masked
+pop_u5 <- raster("/mnt/s3/stratification/CountryFolders/Nigeria/Common files/Population/u5_grid3_1km_new.tif")%>% 
+  crop(shape) %>% mask(shape)
+
+# Change projection to UTM
+new_crs <-"epsg:26332"  #"epsg:21036"
+pop_u5 <- terra::project(rast(pop_u5), new_crs)
+
+# Ensure that the 'shape' is a valid sf object
+# Make sure 'shape' is a valid Simple Features object (sf)
+shape <- st_make_valid(shape)  # Fix invalid geometries
+
+# Perform the union operation after ensuring the geometries are valid
+admin0 <- st_union(shape)
+plot(admin0)
+NGA<-admin0
+
+# Assuming 'pop_u5' is a SpatRaster object
+# library(terra)
+# coordinates_pop_u5 <- xyFromCell(pop_u5, 1:ncell(pop_u5))  # Extract coordinates from 'pop_u5' SpatRaster
+# 
+# # Assuming 'pop_u5' is a SpatRaster object and 'admin0' is an sf object
+# # Extract the coordinates from the admin0 polygon using sf methods
+# admin0_coords <- st_coordinates(admin0)  # Extract coordinates from admin0 (sf object)
+# 
+# # Extract the x and y coordinates of the polygon geometry
+# admin0_x <- admin0_coords[, 1]
+# admin0_y <- admin0_coords[, 2]
+# 
+# # Now, use the point.in.polygon function (from the 'sp' package)
+# in.country <- point.in.polygon(
+#   coordinates_pop_u5[,1],  # x-coordinates from pop_u5
+#   coordinates_pop_u5[,2],  # y-coordinates from pop_u5
+#   admin0_x,                # x-coordinates of admin0 polygon
+#   admin0_y                 # y-coordinates of admin0 polygon
+# )
+# 
+#in.country <- which(in.country==1 & values(pop_u5)>0)# do not make prediction if population not above 0
+
 
 # Create an index vector of each pixel, along with their coordinates
+population   <- values(pop_u5)
 valid.pix     <- which(!is.na(population) & population>0)
-im.coords     <- coordinates(buffer.image)[valid.pix,]
-country.index <- numeric(length(valid.pix))+NA
-
-library(raster)
-library(sf)
-shape <- st_read(file.path(dir_path,"Common files/Shapefiles/NGA_LGAs.shp"))  # Ensure this returns a SpatialPolygonsDataFrame
-# Convert sf object to SpatialPolygonsDataFrame
-shape_sp <- as(shape, "Spatial")  # Converts to SpatialPolygonsDataFrame
-
-# Extract values using raster::extract()
-values <- extract(buffer.image, shape_sp)
-
-# Update country.index
-country.index[!is.na(values[valid.pix])] <- 0
-
-library(tidyverse)
-country.shp <- st_read(file.path(dir_path,"Common files/Shapefiles/NGA_LGAs.shp")) %>% mutate(
-    adm1 = snakecase::to_snake_case(State),
-    adm2 = snakecase::to_snake_case(LGA)
-  ) %>%
-  dplyr::select(adm1, adm2, geometry)
-
-
-# Create raster of country-assigned pixels. 
-country.image         <- buffer.image
-buffer                <- numeric(length(buffer.image))+NA
-buffer[valid.pix]     <- country.index
-values(country.image) <- buffer
-plot(country.image)
-
-# Determine valid pixels (total and in-country-only), and their coordinates 
-Nvalid.pix        <- length(valid.pix)
-in.country.pix    <- which(country.index==0)
-Ncountry.pix      <- length(in.country.pix)
+             
+im.coords     <- xyFromCell(pop_u5, valid.pix)
 valid.coords      <- im.coords
-in.country.coords <- im.coords[in.country.pix,]
+```
 
+```{r project_rasters}
+library(terra)
+# define a template raster representing our compute grid: 0 in land cells, NA
+# elsewhere
+grid_raster <- pop_u5 * 0
+names(grid_raster) <- NULL
+
+# Pick projection as UTM zone 36S (Uganda, Kenya, Tanzania)
+#Nigeria is covered by three UTM zones, namely: Zones 31, 32 and 33
+new_crs <-"epsg:26332"  #"epsg:21036"
+# project these files
+grid_raster <- terra::project(rast(grid_raster), new_crs)
 ```
 
 
-
-
-
 ```{r}
+library(raster)
+  library(terra)
+library(tidyverse)
 dir_path <- "/mnt/s3/stratification/CountryFolders/Nigeria"
 
 # Raster locations
 raster_dir <- paste0(dir_path,"/Common files/Covariates/1km/")
 # Raster files
-covariate.filelist <- list(
+covariate.names <- list(
   "accessibility_to_cities_2015_v1.0.tif",
   "Aridity_Index_v2.Synoptic.Overall.Data.1km.Data.tif",
   "distance_to_water.tif",
@@ -271,119 +289,149 @@ covariate.filelist <- list(
   "tree_fraction_any_percent.tif",
   "HydroSHEDS_TWI.tif")
 
-# get variables of interest
-covariates_list <- paste(raster_dir, covariate.filelist, sep = "/")
+# # Labels
+# names(covariate.names) <- c(
+#   "Accesibility to cities",
+#   "Aridity Index",
+#   "Distance to water",
+#   "Elevation",
+#   "EVI",
+#   "LST Day",
+#   "LST Night",
+#   "PET",
+#   "Slope",
+#   "Stable Lights",
+#   "TCB",
+#   "TCW",
+#   "TSI",
+#   "Tree fraction",
+#   "TWI")
 
-# Labels
-ras_names <- c(
-  "Accesibility to cities",
-  "Aridity Index",
-  "Distance to water",
-  "Elevation",
-  "EVI",
-  "LST Day",
-  "LST Night",
-  "PET",
-  "Slope",
-  "Stable Lights",
-  "TCB",
-  "TCW",
-  "TSI",
-  "Tree fraction",
-  "TWI")
-names(covariates_list) <- ras_names
+# Number of covariates
+Ncovariates <- length(covariate.names)
 
-# Mask and scaled raster covariates_list
-covariates_stack <- covariates_list%>% 
-  #map(raster) %>% 
-  stack() %>% 
-  mask(country.shp) %>% 
-  scale()
+# Transformations to apply to 
+transformation.types <- c("Exponential",
+                          "Normal",
+                          "Exponential",
+                          "Exponential",
+                          "Normal",
+                          "Normal",
+                          "Normal",
+                          "Normal",
+                          "Exponential",
+                          "Exponential",
+                          "Normal",
+                          "Normal",
+                          "Normal",
+                          "Normal",
+                          "Normal"
+)
 
-# Truncate large values
-covariates_stack[covariates_stack > 5]  <- 5
-covariates_stack[covariates_stack < -5] <- -5
+# Match raster to transforms
+for (i in 1:Ncovariates) {
+   cat(i, covariate.names[[i]],transformation.types[i],"\n")
+ }
+# Create empty list to file
+cov.list <- list()
 
-# Convert to SpatRaster because it was a RasterBrick
-library(terra)
-covariates_stack <-rast(covariates_stack)
+# Read raster, apply transformation, append to list
+for (k in 1:Ncovariates) {
+  
+  cat("Processing covariate:",covariate.names[[k]],"...\n")
+  cov.current <- raster(
+    paste0(
+      raster_dir,
+      covariate.names[[k]]))
+  # Step 1: Ensure both rasters are SpatRaster
+  cov.current <- rast(cov.current)  # Convert if cov.current is a RasterLayer
+  #buffer.image <- rast(buffer.image)  # Convert if buffer.image is a RasterLayer
+  
+  # Step 2: Make sure both rasters have the same CRS (coordinate reference system)
+  if (crs(cov.current) != crs(pop_u5)) {
+    cov.current <- project(cov.current, crs(pop_u5))  # Reproject cov.current to match buffer.image's CRS
+  }
+  
+  # Step 3: Crop or Extend
+  # If you want to crop cov.current to the extent of buffer.image
+  cov.current <- crop(pop_u5, cov.current)  # Crop to the extent of buffer.image
+  
+  # If you want to extend cov.current to match the extent of buffer.image
+  cov.current <- extend(cov.current, ext(pop_u5))  # Extend to the extent of buffer.image
+  
+  if (!prod(dim(cov.current)==dim(pop_u5))) 
+  {warning("Mismatched dimensions!\n")
+    cov.current <- resample(cov.current, pop_u5)
+    plot(cov.current)}
+  cov.current <- values(cov.current)[valid.pix]
+  
+  if (transformation.types[k]=="Normal") {
+    cov.current <- (cov.current-mean(cov.current,na.rm=T))/sd(cov.current,na.rm=T)
+  }
+  
+  if (transformation.types[k]=="Exponential") {
+    cov.current <- cov.current + min(
+      cov.current[cov.current>0 & cov.current!=Inf & 
+                    cov.current!=-Inf & !is.nan(cov.current)], na.rm=T) + 
+      abs(min(
+        cov.current[cov.current>0 & cov.current!=Inf & cov.current!=-Inf & 
+                      !is.nan(cov.current)],na.rm=T))
+    cov.current <- qnorm(pexp(cov.current,1/mean(cov.current,na.rm=T)))
+  }
+  
+  nas <- which(is.na(cov.current))
+  if (length(nas)>0) {
+    validp  <- which(!(is.na(cov.current) | cov.current==-Inf | cov.current==Inf))
+    vcoords <- valid.coords[validp,]
+    for (i in nas) {
+      nearestv <- which.min(
+        (vcoords[,1]-valid.coords[i,1])^2+(vcoords[,2]-valid.coords[i,2])^2)
+      cov.current[i] <- cov.current[validp[nearestv]]
+    }
+  }
+  
+  infs <- which(cov.current==Inf)
+  if (length(infs)>0) {
+    validp  <- which(!(cov.current==-Inf | cov.current==Inf))
+    vcoords <- valid.coords[validp,]
+    for (i in infs) {
+      nearestv <- which.min(
+        (vcoords[,1]-valid.coords[i,1])^2+(vcoords[,2]-valid.coords[i,2])^2)
+      cov.current[i] <- cov.current[validp[nearestv]]
+    }
+  }
+  
+  neginfs <- which(cov.current==-Inf)
+  if (length(neginfs)>0) {
+    validp  <- which(!(cov.current==-Inf))
+    vcoords <- valid.coords[validp,]
+    for (i in neginfs) {
+      nearestv <- which.min(
+        (vcoords[,1]-valid.coords[i,1])^2+(vcoords[,2]-valid.coords[i,2])^2)
+      cov.current[i] <- cov.current[validp[nearestv]]
+    }
+  }
+  # hist(cov.current)
+  cov.list[[k]] <- cov.current
+}
+
+# Turn list into a matrix
+covariates <- do.call(rbind,cov.list)
+
+# Truncate extreme values
+covariates[covariates > 5]  <- 5
+covariates[covariates < -5] <- -5
 ```
-
-
-# Population raster
-
-```{r population, eval = FALSE}
-# library(raster)
-# # Read in population data and construct reference image =====
-# 
-# pop_raster_u5 <- raster("/mnt/s3/stratification/CountryFolders/Nigeria/Common files/Population/u5_grid3_1km_new.tif")
-# 
-# any(is.na(values(pop_raster_u5)))  # Returns TRUE if there are NA values
-# plot(is.na(pop_raster_u5), main = "NA Distribution in Population Raster")
-# 
-# # find an index to all the cells that have data
-# pop_raster_u5 <- rast(pop_raster_u5)
-# not_na_idx <- which(!is.nan(values(pop_raster_u5)))
-# 
-# # Get all raster values
-# pop_values <- values(pop_raster_u5)
-# 
-# # Mask: Keep only values in `not_na_idx`, set others to NA
-# pop_values[-not_na_idx] <- NA  
-# 
-# # Assign masked values back to the raster
-# pop_raster_masked <- pop_raster_u5  # Copy the original raster structure
-# values(pop_raster_masked) <- pop_values  # Apply the masked values
-# 
-# # Plot the masked raster
-# plot(pop_raster_masked, main = "Masked Population Raster")
-```
-
-
-```{r}
-# library(terra)
-# 
-# pop_raster_u5 <- pop_raster_masked
-# # Match extends
-# pop_nga <- extend(pop_raster_u5, covariates_stack[[1]])
-# 
-# # Align resolution
-# pop_nga <- resample(pop_nga, covariates_stack[[1]], method = "bilinear")  # Use "near" for categorical data
-# 
-# # # crop and mask to NGA
-# pop <- crop(pop_nga, covariates_stack[[1]]) 
-# pop <- mask(pop, covariates_stack[[1]])  
-```
-
 
 The Gaussian process implementations we use below assume that the coordinates are on a plane - they don't account for the curvature of the earth (unlike INLA which is able to model GPs on a sphere). We therefore first need to ensure that the raster we use to define this computational setup is appropriately projected. For the block-circulant matrix approach, this is especially important since the computation relies on the compute locations being arranged in a regular gird. We therefore project our matrix to an appropriate projected coordinate reference system:
 
-```{r project_rasters}
-library(terra)
-# define a template raster representing our compute grid: 0 in land cells, NA
-# elsewhere
-grid_raster <- buffer.image * 0
-names(grid_raster) <- NULL
-
-# Pick projection as UTM zone 36S (Uganda, Kenya, Tanzania)
-#Nigeria is covered by three UTM zones, namely: Zones 31, 32 and 33
-new_crs <-"epsg:26332"  #"epsg:21036"
-
-# project these files
-grid_raster <- terra::project(rast(grid_raster), new_crs)
-# Get the projection (CRS)
-#st_crs(pop)
-#st_crs(covariates_stack[[1]])
-covariates_raster <- terra::project(covariates_stack, new_crs)
-#pop_raster <- terra::project(pop, new_crs)
-```
 
 # Plot the population
 ```{r pop_plot}
 library(terra)
 # Ensure pop_raster is a SpatRaster
 #Convert SpatRaster to Data Frame
-pop_raster_df <- as.data.frame(buffer.image, xy = TRUE)
+pop_raster_df <- as.data.frame(pop_u5, xy = TRUE)
 
 library(ggplot2)
 ggplot()+
@@ -393,11 +441,6 @@ ggplot()+
   theme_minimal()+
   labs(fill = "Population - U5 in Nigeria", fill = "Population Density")
 
-```
-
-
-```{r Plots_covariates}
-plot(covariates_raster)
 ```
 
 Next we prepare our covariates. We will lower the spatial resolution a little to make the example run faster. This is a good idea when initially setting up and debugging a model, but you'll likely want to increase the spatial resolution later. Then we simulate some fake data, using the first 5 covariates:
@@ -415,9 +458,9 @@ months <- c("January", "February", "March", "April", "May", "June",
 # Extract matching layers
 itn_stack <- itn_stack[[which(names(itn_stack) %in% months)]]
 itn_stack <-itn_stack %>%
-  resample(buffer.image) %>%  #added resample to align the extents
-  crop(buffer.image) %>% 
-  mask(buffer.image)
+  resample(pop_u5) %>%  #added resample to align the extents
+  crop(pop_u5) %>% 
+  mask(pop_u5)
 
 new_crs <-"epsg:26332"  #"epsg:21036"
 # project these file
@@ -434,12 +477,12 @@ itn_monthly <- as_data_frame(itn_monthly) %>%
   dplyr::select(January,February,March,April, May, June,July,August,    September,October,November,December)
 #itn_monthly <- itn_monthly[,c(1:8, 11:14)]
 # 
-itn_map <- st_bind_cols(country.shp, itn_monthly)
+itn_map <- st_bind_cols(shape, itn_monthly)
 
-itn_annual_use <- rowMeans(itn_monthly, na.rm = TRUE)
-itn_annual_map <- st_bind_cols(country.shp, itn_annual_use)
+# itn_annual_use <- rowMeans(itn_monthly, na.rm = TRUE)
+# itn_annual_map <- st_bind_cols(country.shp, itn_annual_use)
 
-ggplot(itn_annual_map)+
+ggplot(itn_map)+
   geom_sf( aes(geometry=geometry, fill=itn_annual_use))+
   scale_fill_distiller(palette = "Spectral", na.value = "lightblue")+
   labs(fill = "Annual ITN use ", title = "Nigeria LGAs", subtitle = "MIS 2020, 0-5 years")+
@@ -447,45 +490,11 @@ ggplot(itn_annual_map)+
 ```
 
 
-```{r sim_data}
-# # aggregate rasters
-#grid_raster <- terra::aggregate(grid_raster, 20)
-#bioclim_raster <- terra::aggregate(covariates_raster, 20)
-#pop_raster <- terra::aggregate(pop_raster, 20)
-
- 
-# # subset and scale the bioclim layers to make our covariates
-# #covariates_raster <- scale(bioclim_raster[[1:5]])
-# 
-# pop_raster <- pop_raster
-# covariates_raster <- cov_stack_nga
-# # set time periods
-# start_year <- 2021
-# n_years <- 3
-# 
-# # simulate fake data
-# library(epiwave.mapping)
-# set.seed(1)
-# 
-# years <- seq(start_year, start_year + n_years - 1)
-# prev_survey_time <- round(length(years) * 12 / 2)
-# data <- sim_data(
-#   covariates_rast = covariates_raster,
-#   population_rast = pop_raster, 
-#   years = years,
-#   n_health_facilities = 30,
-#   n_prev_surveys = 15,
-#   case_missingness = 0.3, # assume some fraction of case counts are missing
-#   prev_survey_time = prev_survey_time)
-```
-
-
-
-
 Plot the clinical case timeseries for all health facilities over each year:
 
 ```{r vis_clinical_cases_1}
-nga_inc_data <- read.csv("/mnt/efs/stratification/Nigeria/HBHI_2025/03_Additional_files_optional/Imputation/tgo_dhis2_imputed_aggregated.csv")
+nga_inc_data <- read.csv("/mnt/efs/stratification/Nigeria/HBHI_2025/03_Additional_files_optional/Imputation/tgo_dhis2_imputed_aggregated.csv")%>%
+     arrange(date)
 
 nga_inc_data$date <- as.Date(paste0("01-", nga_inc_data$date), format = "%d-%b %Y")
 
@@ -495,7 +504,7 @@ nga_inc_data_clean <- nga_inc_data[!is.na(nga_inc_data$date) & !is.na(nga_inc_da
 
  ggplot(
    aes(
-     x = date,
+     x = month,
      y = positive,
      colour = adm2,
      group = adm2
@@ -511,6 +520,8 @@ nga_inc_data_clean <- nga_inc_data[!is.na(nga_inc_data$date) & !is.na(nga_inc_da
    ) +
    scale_x_continuous(breaks = 1:12) +
    ggtitle("Clinical case timeseries 0-5 years in Nigeria")
+ 
+ ggsave("~/epiwave.mapping/clinical_cases_timeseries.png")
 ```
 
 # Make a dynamic plot with ggploty package
@@ -529,7 +540,7 @@ nga_inc_data_tt <- nga_inc_data_clean %>%
 library(plotly)
 adm1_plot <- ggplot(
    aes(
-     x = date,
+     x = month,
      y = positive,
      colour = adm2,
      group = adm1
@@ -632,7 +643,8 @@ prev_surveys_rdt <- prev_data %>%
    ylab("") +
    theme_minimal() +
    ggtitle("Prevalence surveys with RDT test",
-           subtitle="MIS-2020 0-5 years in Nigeria")
+           subtitle="MIS-2020 for 0-5 years in Nigeria")
+ ggsave("~/epiwave.mapping/Prevalence_rdt.png")
 ```
 
 Plot the fake delay distribution (probability mass function over days) and prevalence survey detectability functions:
