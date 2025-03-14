@@ -217,28 +217,6 @@ admin0 <- st_union(shape)
 plot(admin0)
 NGA<-admin0
 
-# Assuming 'pop_u5' is a SpatRaster object
-# library(terra)
-# coordinates_pop_u5 <- xyFromCell(pop_u5, 1:ncell(pop_u5))  # Extract coordinates from 'pop_u5' SpatRaster
-# 
-# # Assuming 'pop_u5' is a SpatRaster object and 'admin0' is an sf object
-# # Extract the coordinates from the admin0 polygon using sf methods
-# admin0_coords <- st_coordinates(admin0)  # Extract coordinates from admin0 (sf object)
-# 
-# # Extract the x and y coordinates of the polygon geometry
-# admin0_x <- admin0_coords[, 1]
-# admin0_y <- admin0_coords[, 2]
-# 
-# # Now, use the point.in.polygon function (from the 'sp' package)
-# in.country <- point.in.polygon(
-#   coordinates_pop_u5[,1],  # x-coordinates from pop_u5
-#   coordinates_pop_u5[,2],  # y-coordinates from pop_u5
-#   admin0_x,                # x-coordinates of admin0 polygon
-#   admin0_y                 # y-coordinates of admin0 polygon
-# )
-# 
-#in.country <- which(in.country==1 & values(pop_u5)>0)# do not make prediction if population not above 0
-
 
 # Create an index vector of each pixel, along with their coordinates
 population   <- values(pop_u5)
@@ -254,12 +232,6 @@ library(terra)
 # elsewhere
 grid_raster <- pop_u5 * 0
 names(grid_raster) <- NULL
-# 
-# # Pick projection as UTM zone 36S (Uganda, Kenya, Tanzania)
-# #Nigeria is covered by three UTM zones, namely: Zones 31, 32 and 33
-# new_crs <-"epsg:26332"  #"epsg:21036"
-# # project these files
-# grid_raster <- terra::project(rast(grid_raster), new_crs)
 ```
 
 Next we prepare our covariates. We will lower the spatial resolution a little to make the example run faster. This is a good idea when initially setting up and debugging a model, but you'll likely want to increase the spatial resolution later.
@@ -351,24 +323,6 @@ covariate.names <- list(
   "TempSuitability.Pf.Index.1k.2010.global.tif",
   "tree_fraction_any_percent.tif",
   "HydroSHEDS_TWI.tif")
-
-# # Labels
-# names(covariate.names) <- c(
-#   "Accesibility to cities",
-#   "Aridity Index",
-#   "Distance to water",
-#   "Elevation",
-#   "EVI",
-#   "LST Day",
-#   "LST Night",
-#   "PET",
-#   "Slope",
-#   "Stable Lights",
-#   "TCB",
-#   "TCW",
-#   "TSI",
-#   "Tree fraction",
-#   "TWI")
 
 # Number of covariates
 Ncovariates <- length(covariate.names)
@@ -511,9 +465,22 @@ ggplot()+
 ```{r TS}
 library(ggplot2)
 all_s_ts <- raster("/mnt/s3/stratification/CountryFolders/Nigeria/Projects/1.0_HBHI_risk_mapping/04 Models/jan2023-update/treatment-seeking/2021_ts_dhis2_1km.tif")
-all_s_ts <- terra::project(rast(all_s_ts), new_crs)
 
-shape$alls_ts <- exactextractr::exact_extract(all_s_ts, shape, 'mean')
+all_s_ts <- rast(all_s_ts)  # Convert if all_s_ts is a RasterLayer
+  
+# Step 2: Make sure both rasters have the same CRS (coordinate reference system)
+if (crs(all_s_ts) != crs(pop_u5)) {
+  all_s_ts <- project(all_s_ts, crs(pop_u5))  # Reproject all_s_ts to match buffer.image's CRS
+}
+
+# Step 3: Crop or Extend
+# If you want to crop all_s_ts to the extent of buffer.image
+all_s_ts <- crop(all_s_ts, pop_u5)  # Crop to the extent of buffer.image
+
+# If you want to extend all_s_ts to match the extent of buffer.image
+all_s_ts <- extend(all_s_ts, ext(pop_u5))  # Extend to the extent of buffer.image
+
+shape$alls_ts <- exactextractr::exact_extract(all_s_ts,shape, 'mean')
 ggplot(shape)+
   geom_sf(mapping = aes(fill = alls_ts))+
   scale_fill_distiller(palette = "BrBG", direction = 1)+
@@ -532,8 +499,50 @@ ggplot(shape)+
         legend.key.height = unit(0.5, "cm"))
 ```
 
+```{r treatment_seeking_matrix}
+if (!prod(dim(all_s_ts)==dim(pop_u5))) 
+{warning("Mismatched dimensions!\n")
+  all_s_ts <- resample(all_s_ts, pop_u5)
+  plot(all_s_ts)}
+all_s_ts <- values(all_s_ts)[valid.pix]
+
+nas <- which(is.na(all_s_ts))
+if (length(nas)>0) {
+  validp  <- which(!(is.na(all_s_ts) | all_s_ts==-Inf | all_s_ts==Inf))
+  vcoords <- valid.coords[validp,]
+  for (i in nas) {
+    nearestv <- which.min(
+      (vcoords[,1]-valid.coords[i,1])^2+(vcoords[,2]-valid.coords[i,2])^2)
+    all_s_ts[i] <- all_s_ts[validp[nearestv]]
+  }
+}
+
+infs <- which(all_s_ts==Inf)
+if (length(infs)>0) {
+  validp  <- which(!(all_s_ts==-Inf | all_s_ts==Inf))
+  vcoords <- valid.coords[validp,]
+  for (i in infs) {
+    nearestv <- which.min(
+      (vcoords[,1]-valid.coords[i,1])^2+(vcoords[,2]-valid.coords[i,2])^2)
+    all_s_ts[i] <- all_s_ts[validp[nearestv]]
+  }
+}
+
+neginfs <- which(all_s_ts==-Inf)
+if (length(neginfs)>0) {
+  validp  <- which(!(all_s_ts==-Inf))
+  vcoords <- valid.coords[validp,]
+  for (i in neginfs) {
+    nearestv <- which.min(
+      (vcoords[,1]-valid.coords[i,1])^2+(vcoords[,2]-valid.coords[i,2])^2)
+    all_s_ts[i] <- all_s_ts[validp[nearestv]]
+  }
+}
+```
+
+
 Read ITN use in LGA level
-```{r ITN_use}
+```{r ITN_use_plots}
 library(raster)
 library(terra)
 itn_stack <- stack(list.files("/mnt/s3/stratification/CountryFolders/Nigeria/Common files/Covariates/1km/Monthly/ITN/20210531_v1/", ".tif", full.names = TRUE))
@@ -544,38 +553,84 @@ months <- c("January", "February", "March", "April", "May", "June",
 
 # Extract matching layers
 itn_stack <- itn_stack[[which(names(itn_stack) %in% months)]]
-itn_stack <-itn_stack %>%
-  resample(pop_u5) %>%  #added resample to align the extents
-  crop(pop_u5) %>% 
-  mask(pop_u5)
 
 new_crs <-"epsg:26332"  #"epsg:21036"
 # project these file
 itn_stack <- terra::project(rast(itn_stack), new_crs)
 
-buffer.image <- terra::project(rast(buffer.image), new_crs)
-
-# names(itn_stack) <- month.name[as.numeric(sub("ITN_use_1km_monthly_", "", names(itn_stack)))]
-# # 
-itn_monthly <- terra::extract(itn_stack, country.shp, 'mean')
+itn_monthly <- terra::extract(itn_stack, shape, 'mean')
  names(itn_monthly) = sub("mean.", "", names(itn_monthly))
 # # 
 itn_monthly <- as_data_frame(itn_monthly) %>% 
   dplyr::select(January,February,March,April, May, June,July,August,    September,October,November,December)
-#itn_monthly <- itn_monthly[,c(1:8, 11:14)]
-# 
-itn_map <- st_bind_cols(shape, itn_monthly)
 
-# itn_annual_use <- rowMeans(itn_monthly, na.rm = TRUE)
-# itn_annual_map <- st_bind_cols(country.shp, itn_annual_use)
+itn_map <- dplyr::bind_cols(shape, itn_monthly)
 
-ggplot(itn_map)+
-  geom_sf( aes(geometry=geometry, fill=itn_annual_use))+
+# Ensure month labels are correct
+month_labels <- c("Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+# Convert dataset to long format
+itn_map_long <- itn_map %>%
+  pivot_longer(cols = 11:22, names_to = "month", values_to = "ITN_Use") %>%
+  mutate(month = factor(month, levels = names(itn_map)[11:22], labels = month_labels))
+
+
+ggplot(itn_map_long)+
+  geom_sf( aes(geometry=geometry, fill=ITN_Use))+
   scale_fill_distiller(palette = "Spectral", na.value = "lightblue")+
+  facet_wrap(~month)+
   labs(fill = "Annual ITN use ", title = "Nigeria LGAs", subtitle = "MIS 2020, 0-5 years")+
   theme_bw()
 ```
 
+```{r ITN_use_matrix}
+library(raster)
+library(terra)
+# Loop through each month and process
+ITN_temporal_cov <- matrix(0,nrow=length(valid.pix),ncol=12 )
+for (month_idx in 1:12) {
+    # Loading the current month raster
+    cov_current <- raster(paste0("/mnt/s3/stratification/CountryFolders/Nigeria/Common files/Covariates/1km/Monthly/ITN/20210531_v1//ITN_use_1km_monthly_", month_idx, ".tif")) 
+    cov_current <- rast(cov_current)  # Convert if cov_current is a RasterLayer
+    if (crs(cov_current) != crs(pop_u5)) {
+      cov_current <- project(cov_current, crs(pop_u5))  
+    }
+    cov_current <- crop(cov_current, pop_u5)  
+    cov_current <- extend(cov_current, ext(pop_u5))  # Extend to the extent of buffer.image
+    # Ensure matching dimensions
+    if (!prod(dim(cov_current) == dim(pop_u5))) {
+        stop("Mismatched dimensions!\n")
+      cov_current <- resample(cov_current, pop_u5)
+    }
+    # Extract valid pixels
+    cov_current_values <- values(cov_current)[valid.pix]
+
+    # Handle NA, Inf, and -Inf values
+    na_indices <- which(is.na(cov_current_values))
+    inf_indices <- which(cov_current_values == Inf)
+    neginf_indices <- which(cov_current_values == -Inf)
+
+    # Replace missing values (NA, Inf, -Inf) by nearest valid value
+    for (indices in list(na_indices, inf_indices, neginf_indices)) {
+        if (length(indices) > 0) {
+            validp <- which(!(cov_current_values == -Inf | cov_current_values == Inf | is.na(cov_current_values)))
+            vcoords <- valid.coords[validp,]
+            for (i in indices) {
+                nearestv <- which.min((vcoords[,1] - valid.coords[i, 1])^2 + (vcoords[,2] - valid.coords[i, 2])^2)
+                cov_current_values[i] <- cov_current_values[validp[nearestv]]
+            }
+        }
+    }
+
+    # Store the processed data
+    ITN_temporal_cov[, month_idx] <- cov_current_values
+    
+    # Print the month
+    cat(month.name[month_idx], " ")
+
+}
+```
 
 Plot the clinical case timeseries for all health facilities over each year:
 
@@ -588,64 +643,20 @@ nga_inc_data$date <- as.Date(paste0("01-", nga_inc_data$date), format = "%d-%b %
 # Filter out rows with NA values
 nga_inc_data_clean <- nga_inc_data[!is.na(nga_inc_data$date) & !is.na(nga_inc_data$positive), ]
 
-
- ggplot(
-   aes(
+ggplot(aes(
      x = month,
      y = positive,
      colour = adm2,
      group = adm2
-   ),
-   data = nga_inc_data_clean) +
-   facet_wrap(~year) +
-   geom_line(
-     linewidth = 0.3
-   ) + 
+   ), data = nga_inc_data_clean) +
+   facet_wrap(~year, nrow = 3) +  # Set the number of rows to 2 (or change this value as needed)
+   geom_line(linewidth = 0.3) + 
    theme_minimal() +
-   scale_colour_discrete(
-     guide = "none"
-   ) +
+   scale_colour_discrete(guide = "none") +
    scale_x_continuous(breaks = 1:12) +
    ggtitle("Clinical case timeseries 0-5 years in Nigeria")
  
- ggsave("~/epiwave.mapping/clinical_cases_timeseries.png")
-```
-
-# Make a dynamic plot with ggploty package
-```{r vis_clinical_cases_2}
-nga_inc_data_tt <- nga_inc_data_clean %>%
-  mutate(adm1= case_when(adm1== "federal_capital_territory" ~ "fct",
-                         adm1== "abuja_municipal_area_council" ~ "amac",
-                         TRUE ~ as.character(adm1) #be sure to include this or it will turn name_1 NA
-                         ))
-
-nga_inc_data_tt <- nga_inc_data_clean %>%
-  mutate(adm2= case_when(adm2== "abuja_municipal_area_council" ~ "amac",
-                         TRUE ~ as.character(adm2) #be sure to include this or it will turn name_1 NA
-                         ))
-
-library(plotly)
-adm1_plot <- ggplot(
-   aes(
-     x = month,
-     y = positive,
-     colour = adm2,
-     group = adm1
-   ),
-   data = nga_inc_data_tt) +
-   facet_wrap(~year) +
-   geom_line(
-     linewidth = 0.3
-   ) + 
-   theme_minimal() +
-   scale_colour_discrete(
-     guide = "none"
-   ) +
-   scale_x_continuous(breaks = 1:12) +
-   ggtitle("Clinical case timeseries 0-5 years in Nigeria")
-  
-p <- ggplotly(adm1_plot)
-p
+ ggsave("~/epiwave.mapping/clinical_cases_timeseries_2021_2023.png")
 ```
 
 
@@ -668,7 +679,7 @@ prev_surveys_mic <- prev_data %>%
    )
 # 
  ggplot() +
-   geom_sf(data = country.shp) +
+   geom_sf(data = shape) +
    scale_fill_gradient(
      low = grey(0.9),
      high = grey(0.9),
@@ -737,59 +748,126 @@ prev_surveys_rdt <- prev_data %>%
 Plot the fake delay distribution (probability mass function over days) and prevalence survey detectability functions:
 
 ```{r vis_data_4}
-#  max_case_delay <- 14
-# case_delay_plot <- tibble(
-#    days = seq(0, case_delay_max_days)) %>%
-#    mutate(pmf = data$surveillance_information$case_delay_distribution_daily_fun
-#  (days)
-#   )
+max_case_delay <- 14
+pi_daily <- function(day_difference) {
+    upper_limit <- max_case_delay
+    # use a truncated lognormal (truncated to 0-upper_limit)
+    mu <- 1.2
+    sigma <- 0.5
+    day_difference_old <- day_difference
+    day_difference <- round(day_difference)
+    if (!max(abs(day_difference - day_difference_old) < 1e-4)) {
+      warning("day_difference was non-integer, using rounded values")
+    }
+
+    upper <- plnorm(day_difference + 1, mu, sigma)
+    lower <- plnorm(day_difference, mu, sigma)
+    dens <- upper - lower
+
+    # correct the densities
+    norm <- plnorm(upper_limit, mu, sigma)
+    res <- dens / norm
+    res[day_difference > upper_limit] <- 0
+    res[day_difference < 0] <- 0
+    res
+  }
+
+case_delay_plot <- tibble(
+    days = seq(0, max_case_delay)) %>%
+    mutate(pmf = pi_daily(days)
+   )
 # 
-# ggplot(
-#   aes(x = days,
-#       y = pmf),
-#   data = case_delay_plot) +
-#   geom_step() +
-#   theme_minimal() +
-#   ggtitle("Case reporting delay distribution",
-#           "Probability of reporting X days after infection")
+ ggplot(
+   aes(x = days,
+       y = pmf),
+   data = case_delay_plot) +
+   geom_step() +
+   theme_minimal() +
+   ggtitle("Case reporting delay distribution",
+           "Probability of reporting X days after infection")
 ```
 
 ```{r vis_data_5}
-# detectability_plot <- tibble(
-#   days = seq(0, data$surveillance_information$prev_detectability_max_days)) %>%
-#   mutate(
-#     detectability = data$surveillance_information$prev_detectability_daily_fun
-# (days)
-#   )
+prev_detectability_max_days <- 30
+q_daily <- function(days) {
+    up <- plogis((days * 2) - 5)
+    down <- 1 - plogis(days / 2 - 10)
+    q <- up  * down
+    q[days < 0] <- 0
+    q[days > 30] <- 0
+    q
+  }
+ detectability_plot <- tibble(
+   days = seq(0, prev_detectability_max_days)) %>%
+   mutate(
+     detectability = q_daily(days)
+   )
 # 
-# ggplot(
-#   aes(x = days,
-#       y = detectability),
-#   data = detectability_plot) +
-#   geom_step() +
-#   theme_minimal() +
-#   ggtitle("Prevalence survey detectability function",
-#           "Probability of registering a positive if tested X days after infection")
+ ggplot(
+   aes(x = days,
+       y = detectability),
+   data = detectability_plot) +
+   geom_step() +
+   theme_minimal() +
+   ggtitle("Prevalence survey detectability function",
+           "Probability of registering a positive if tested X days after infection")
 ```
 
 Plot the assumed infection prevalence - clinical case incidence relationship:
 
 ```{r vis_data_6}
-# prev_inc_plot <- tibble(prevalence = seq(0, 0.5, length.out = 100)) %>%
-#   mutate(
-#     clinical_incidence = data$surveillance_information$prev_inc_function
-# (prevalence)
-#   )
+q_max_days <- 30
+q_star <- sum(q_daily(seq(0, q_max_days)))
+
+# As per equations above, we can get the instantaneous prevalence using this,
+# and the provided prevalence-incidence relationship to map to the incidence
+# rate of all clinical cases (reported or not)
+# create a function g for the prevalence-incidence relationship
+  g <- function(prevalence) {
+    (1/365) * (1 - exp(-prevalence * 10))
+  }
+
+#clinical_case_incidence <- g(q_star * infection_incidence)
+
+prev_inc_plot <- tibble(prevalence = seq(0, 0.5, length.out = 100)) %>%
+   mutate(
+     clinical_incidence = g(prevalence)
+   )
 # 
-# ggplot(
-#   aes(x = prevalence,
-#       y = 365 * clinical_incidence),
-#   data = prev_inc_plot) +
-#   geom_line() +
-#   theme_minimal() +
-#   xlab("Prevalence") +
-#   ylab("Clinical incidence (annual)") +
-#   ggtitle("Prevalence - clinical incidence function")
+ ggplot(
+   aes(x = prevalence,
+       y = 365 * clinical_incidence),
+   data = prev_inc_plot) +
+   geom_line() +
+   theme_minimal() +
+   xlab("Prevalence") +
+   ylab("Clinical incidence (annual)") +
+   ggtitle("Prevalence - clinical incidence function")
+```
+
+Prevalence observed timeseries
+```{r vis_data_6}
+q_max_days <- 30
+q_star <- sum(q_daily(seq(0, q_max_days)))
+
+g <- function(prevalence) {
+    (1/365) * (1 - exp(-prevalence * 10))
+  }
+
+prev_inc_plot <- tibble(prevalence = prev_surveys_rdt$prevalence) %>%
+   mutate(
+     clinical_incidence = g(prevalence)
+   )
+# 
+ ggplot(
+   aes(x = prevalence,
+       y = 365 * clinical_incidence),
+   data = prev_inc_plot) +
+   geom_line() +
+   theme_minimal() +
+   xlab("Real prevalence observed") +
+   ylab("Clinical incidence (annual)") +
+   ggtitle("Prevalence - clinical incidence function")
 ```
 
 ### Model specification using greta
@@ -908,14 +986,12 @@ phi <- gamma(shape = gamma_prior_params$shape,
 
 ```
 
-```{r prior_hist}
+```{r Plot_priors_histogram}
 prior_hist <- function(x, title = "Histogram of Prior"){
   sims <- calculate(x, nsim = 1000)
   hist(sims$x,main=title, breaks = 100)
 }
-```
 
-```{r Plot_priors_histogram}
 library(bayesplot)
 
 par(mfrow = c(2, 1))  # Create a 2x1 layout (2 plots)
@@ -1025,25 +1101,27 @@ Here we use an arbitrary set of priors, that happen to be those used to simulate
 # intercept and slope for fixed-effects terms on daily infection incidence
 alpha <- normal(log(1e-4), 1) #Have a think about this parameter
 beta <- normal(0, 1, dim = ncol(covariates))
+
+beta_itn <- normal(0, 1, dim = ncol(ITN_temporal_cov), truncation = c(0,Inf))
 # fraction of all clinical cases reported in case counts
 r <- beta(10, 5)
 
 prior_hist(alpha, "histogram of alpha")
 prior_hist(beta, "histogram of beta")
 prior_hist(r, "histogram of r")
+prior_hist(beta_itn, "histogram of beta_itn")
 ```
 
 Then we can define the deterministic mapping from these, through infection incidence, to our observed data. First we compute the daily incidence of new infections, per cell, per timestep.
 ```{r define_infection_incidence}
-
 # get an index to all pixel values
 all_cells <- terra::cells(grid_raster)
 
 # extract the covariate design matrix (scale)
 X <- covariates
 
-# matrix-multiply with beta, and add alpha, to get the spatial fixed effects
-fixef <- alpha + X %*% beta # we have to add the ITN use: -b_ITN*Y_ITN
+# matrix-multiply with beta, and add alpha, to get the spatial fixed effects, ITN use effects
+fixef <- alpha + X %*% beta - ITN_temporal_cov %*% beta_itn
 
 # add on epsilon, and convert to infection incidence
 eta <- sweep(epsilon, 1, fixef, FUN = "+")
@@ -1057,12 +1135,10 @@ pop_all_cells <- terra::extract(pop_u5, all_cells)[[1]]
 daily_new_infections <- sweep(infection_incidence, 1, pop_all_cells, FUN = "*")
 timeperiod_new_infections <- daily_new_infections * timeperiod_days
 
-
-sim_daily_new_infections <- calculate(daily_new_infections, nsim=1000)
 ```   
 Note that we can similarly simulate other objects like `timeperiod_new_infections` from the model priors and plot them as rasters to check the model and prior specification seems reasonable.
 
-Next we will compute the expected prevalence at our prevalence survey locations. We need to find the index to the rows in `timeperiod_new_infections` where the prevalence surveys were performed, and then apply the appropriate convolution on these to compute the expeccted prevalences at those times and places.
+Next we will compute the expected prevalence at our prevalence survey locations. We need to find the index to the rows in `timeperiod_new_infections` where the prevalence surveys were performed, and then apply the appropriate convolution on these to compute the expected prevalences at those times and places.
 
 ```{r}
 library(sf)
@@ -1074,7 +1150,7 @@ library(raster)
 prevalence_sf <- st_as_sf(prev_surveys_rdt,
                           coords = c("longitude", "latitude"),
                           crs = 4326) %>%
-  sf::st_transform(crs = st_crs(covariates_raster[[1]]))
+  sf::st_transform(crs = st_crs(pop_u5))
 
 
 # Print to check if it worked
@@ -1095,7 +1171,7 @@ prev_coords <- prevalence_sf %>%
 prev_cells <- terra::cellFromXY(grid_raster, prev_coords)
 # get the index to rows in our compute objects
 prev_index <- match(prev_cells, all_cells)
-prev_index <- prev_index[!is.na(prev_index)]
+#prev_index <- prev_index[!is.na(prev_index)]
 # pull out the number of infections per day in these locations
 daily_new_infections_prev_locs <- daily_new_infections[prev_index, ]
 
@@ -1137,7 +1213,7 @@ prevalence_prev_locs <- sweep(detectable_infections_daily_prev_locs,
 ```
 
 Now we model the expected clinical incidence at each pixel, accounting for the prevalence-incidence relationship, delays between infection and reporting, imperfect reporting rates, and aggregating the counts over health facility catchments.
-
+# We are going to add here the treatment seeking. Because it's not all infected individuals seek treatment
 ```{r define_clinical_incidence}
 # first, we define gamma: the ratio of clinical cases to infections
 
@@ -1152,7 +1228,7 @@ q_star <- sum(q_daily(seq(0, q_max_days)))
     (1/365) * (1 - exp(-prevalence * 10))
   }
 #g <- data$surveillance_information$prev_inc_function
-clinical_case_incidence <- g(q_star * infection_incidence)
+clinical_case_incidence <- g(q_star * infection_incidence*all_s_ts)
 # multiplying by the reporting rate r gives us the reported clinical incidence rate
 reported_clinical_case_incidence <- r * clinical_case_incidence
 
