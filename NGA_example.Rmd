@@ -254,18 +254,81 @@ library(terra)
 # elsewhere
 grid_raster <- pop_u5 * 0
 names(grid_raster) <- NULL
+# 
+# # Pick projection as UTM zone 36S (Uganda, Kenya, Tanzania)
+# #Nigeria is covered by three UTM zones, namely: Zones 31, 32 and 33
+# new_crs <-"epsg:26332"  #"epsg:21036"
+# # project these files
+# grid_raster <- terra::project(rast(grid_raster), new_crs)
+```
 
-# Pick projection as UTM zone 36S (Uganda, Kenya, Tanzania)
-#Nigeria is covered by three UTM zones, namely: Zones 31, 32 and 33
-new_crs <-"epsg:26332"  #"epsg:21036"
-# project these files
-grid_raster <- terra::project(rast(grid_raster), new_crs)
+Next we prepare our covariates. We will lower the spatial resolution a little to make the example run faster. This is a good idea when initially setting up and debugging a model, but you'll likely want to increase the spatial resolution later.
+
+This package is under development by Mauricio and Juniper (MAp)
+```{r}
+# WELCOME TO THE malariaAtlasCovariates R PACKAGE DEMO 2
+# Note that this package is under development!
+# First: Install from GitLab (currently everyone can use the following token)
+devtools::install_gitlab("malaria-atlas-project/data-eng/covariates/malariaatlascovariates", auth_token = "glpat-HYbDsA7b-Ds94JQ1nZP7")
+# Once installed, the optimal workflow is to:
+  # 1) Review available covariates
+  # 2) Select what's needed
+  # 3) Send off query
+  # 4) Visualise
+#install.packages("terra", dependencies = TRUE)
+## Let's get started! ##############################################################################################################################################################
+# Load libraries
+library(malariaAtlasCovariates)
+library(terra)
+library(dplyr)
+library(raster)
+library(viridis)
+
+# General package support
+#?malariaAtlasCovariates
+
+# Step 1: Let's check out the covariates we can load
+covs.list_covariates()
+
+# Step 2: List variable options for a variable
+#cov.list_available_variables("lst_v061")
+
+# Step 3: Send off a single covariate query for Nigeria
+# query_result_day <- cov.query(    cov.cov("lst_v061", type = c("day", "night")),
+#                                   temporal_resolution = "Annual",
+#                                   spatial_resolution = "1km",   # 1km/5km or sometimes 500m etc
+#                                   temporal_summary = "mean",
+#                                   spatial_summary = "Data"  # Change this from "mean" to "Data"
+#                                   ) %>%
+#   cov.filter_date("2021", "2023") %>%     #To and from
+#   cov.clip(geo.countries(version="mapadmin_0_2022", "NGA")) %>% # Note the version name!
+#   cov.load_rasters_as_stack() # Load in rasters/or cov.load_rasters_as_stack() function to load rasterstack object
+
+# Getting my dynamic covariates
+# test, not a raster stack
+lst_day_1km <- cov.query(    cov.cov("lst_v061", type = c("day")),
+                                  temporal_resolution = "Monthly",
+                                  spatial_resolution = "1km",   # 1km/5km or sometimes 500m etc
+                                  temporal_summary = "mean",
+                                  spatial_summary = "Data"  # Change this from "mean" to "Data"
+) %>%
+  cov.filter_date("2021", "2023") %>%     #To and from
+  cov.clip(geo.countries(version="mapadmin_0_2022", "NGA")) %>% # Note the version name!
+  cov.load_rasters() # Load in rasters/or cov.load_rasters_as_stack() function to load rasterstack object
+#lst_day_1km %>%cov.pull_first_raster()
+
+month <- c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12")
+year <- 2020:2022
+
+names(lst_day_1km )
+
+
 ```
 
 
 ```{r}
 library(raster)
-  library(terra)
+library(terra)
 library(tidyverse)
 dir_path <- "/mnt/s3/stratification/CountryFolders/Nigeria"
 
@@ -421,6 +484,7 @@ covariates <- do.call(rbind,cov.list)
 # Truncate extreme values
 covariates[covariates > 5]  <- 5
 covariates[covariates < -5] <- -5
+covariates <- t(covariates)
 ```
 
 The Gaussian process implementations we use below assume that the coordinates are on a plane - they don't account for the curvature of the earth (unlike INLA which is able to model GPs on a sphere). We therefore first need to ensure that the raster we use to define this computational setup is appropriately projected. For the block-circulant matrix approach, this is especially important since the computation relies on the compute locations being arranged in a regular gird. We therefore project our matrix to an appropriate projected coordinate reference system:
@@ -443,7 +507,30 @@ ggplot()+
 
 ```
 
-Next we prepare our covariates. We will lower the spatial resolution a little to make the example run faster. This is a good idea when initially setting up and debugging a model, but you'll likely want to increase the spatial resolution later. Then we simulate some fake data, using the first 5 covariates:
+
+```{r TS}
+library(ggplot2)
+all_s_ts <- raster("/mnt/s3/stratification/CountryFolders/Nigeria/Projects/1.0_HBHI_risk_mapping/04 Models/jan2023-update/treatment-seeking/2021_ts_dhis2_1km.tif")
+all_s_ts <- terra::project(rast(all_s_ts), new_crs)
+
+shape$alls_ts <- exactextractr::exact_extract(all_s_ts, shape, 'mean')
+ggplot(shape)+
+  geom_sf(mapping = aes(fill = alls_ts))+
+  scale_fill_distiller(palette = "BrBG", direction = 1)+
+  labs(title="Treatment seeking (all source) in 2021")+
+  theme(strip.text = element_text(size = 16, face = "bold"),
+        plot.title = element_text(size = 16, face = "bold"),   # Title size
+        plot.caption = element_text(size = 12),               # Caption size
+        axis.title.x = element_text(size = 16),  # X-axis label size
+        axis.title.y = element_text(size = 16),  # Y-axis label size
+        axis.text.x = element_text(size = 14),   # X-axis tick size
+        axis.text.y = element_text(size = 14),   # Y-axis tick size
+        legend.text = element_text(size = 14),                # Legend text size
+        legend.title = element_text(size = 14, face = "bold"), # Legend title size
+        legend.position = 'bottom',
+        legend.key.width = unit(2., "cm"),                  # Largeur des clés
+        legend.key.height = unit(0.5, "cm"))
+```
 
 Read ITN use in LGA level
 ```{r ITN_use}
@@ -618,7 +705,7 @@ prev_surveys_rdt <- prev_data %>%
    )
 # 
  ggplot() +
-   geom_sf(data = country.shp) +
+   geom_sf(data = shape) +
    scale_fill_gradient(
      low = grey(0.9),
      high = grey(0.9),
@@ -739,7 +826,7 @@ We can plot these to see where they fall and check their coverage:
 library(tidyterra)
 library(ggplot2)
 ggplot() +
-  geom_spatraster(data = buffer.image) +
+  geom_spatraster(data = pop_u5) +
   scale_fill_gradient(
     low = grey(0.9),
     high = grey(0.6),
@@ -936,8 +1023,8 @@ Now we have the object for the spatio-temporal random effects, we define our rem
 Here we use an arbitrary set of priors, that happen to be those used to simulate the 'true' parameters in `epiwave.mapping::sim_data()`. In a practical application, the user should give these a lot more thought. 
 ```{r define_priors}
 # intercept and slope for fixed-effects terms on daily infection incidence
-alpha <- normal(log(1e-4), 1)
-beta <- normal(0, 1, dim = terra::nlyr(covariates_raster))
+alpha <- normal(log(1e-4), 1) #Have a think about this parameter
+beta <- normal(0, 1, dim = ncol(covariates))
 # fraction of all clinical cases reported in case counts
 r <- beta(10, 5)
 
@@ -953,18 +1040,7 @@ Then we can define the deterministic mapping from these, through infection incid
 all_cells <- terra::cells(grid_raster)
 
 # extract the covariate design matrix (scale)
-X <- terra::extract(covariates_raster, all_cells)
-
-    # Check for NA values
-any(is.na(X))
-# Check for NAs for a single column
-sum(is.na(X$LST.Day))
-
-# find an index to all the cells that have data
-#not_na_idx <- which(!is.nan(X$LST.Day))
-
-# Replace NA values with 0 (or another meaningful value)
-X[is.na(X)] <- 0
+X <- covariates
 
 # matrix-multiply with beta, and add alpha, to get the spatial fixed effects
 fixef <- alpha + X %*% beta # we have to add the ITN use: -b_ITN*Y_ITN
@@ -976,10 +1052,13 @@ infection_incidence <- ilogit(eta)
 # multiply by population and timeperiod to get the count of new infections per
 # time period
 timeperiod_days <- 365/12
-pop_all_cells <- terra::extract(buffer.image, all_cells)[[1]]
+pop_all_cells <- terra::extract(pop_u5, all_cells)[[1]]
 
 daily_new_infections <- sweep(infection_incidence, 1, pop_all_cells, FUN = "*")
 timeperiod_new_infections <- daily_new_infections * timeperiod_days
+
+
+sim_daily_new_infections <- calculate(daily_new_infections, nsim=1000)
 ```   
 Note that we can similarly simulate other objects like `timeperiod_new_infections` from the model priors and plot them as rasters to check the model and prior specification seems reasonable.
 
