@@ -210,12 +210,12 @@ pop_u5 <- terra::project(rast(pop_u5), new_crs)
 
 # Ensure that the 'shape' is a valid sf object
 # Make sure 'shape' is a valid Simple Features object (sf)
-shape <- st_make_valid(shape)  # Fix invalid geometries
-
-# Perform the union operation after ensuring the geometries are valid
-admin0 <- st_union(shape)
-plot(admin0)
-NGA<-admin0
+# shape <- st_make_valid(shape)  # Fix invalid geometries
+# 
+# # Perform the union operation after ensuring the geometries are valid
+# admin0 <- st_union(shape)
+# #plot(admin0)
+# NGA<-admin0
 
 
 # Create an index vector of each pixel, along with their coordinates
@@ -225,8 +225,7 @@ valid.pix     <- which(!is.na(population) & population>0)
 im.coords     <- xyFromCell(pop_u5, valid.pix)
 valid.coords      <- im.coords
 ```
-
-```{r project_rasters}
+```{r }
 library(terra)
 # define a template raster representing our compute grid: 0 in land cells, NA
 # elsewhere
@@ -234,212 +233,16 @@ grid_raster <- pop_u5 * 0
 names(grid_raster) <- NULL
 ```
 
-Next we prepare our covariates. We will lower the spatial resolution a little to make the example run faster. This is a good idea when initially setting up and debugging a model, but you'll likely want to increase the spatial resolution later.
-
-This package is under development by Mauricio and Juniper (MAp)
+static covariates
 ```{r}
-# WELCOME TO THE malariaAtlasCovariates R PACKAGE DEMO 2
-# Note that this package is under development!
-# First: Install from GitLab (currently everyone can use the following token)
-devtools::install_gitlab("malaria-atlas-project/data-eng/covariates/malariaatlascovariates", auth_token = "glpat-HYbDsA7b-Ds94JQ1nZP7")
-# Once installed, the optimal workflow is to:
-  # 1) Review available covariates
-  # 2) Select what's needed
-  # 3) Send off query
-  # 4) Visualise
-#install.packages("terra", dependencies = TRUE)
-## Let's get started! ##############################################################################################################################################################
-# Load libraries
-library(malariaAtlasCovariates)
-library(terra)
-library(dplyr)
-library(raster)
-library(viridis)
-
-# General package support
-#?malariaAtlasCovariates
-
-# Step 1: Let's check out the covariates we can load
-covs.list_covariates()
-
-# Step 2: List variable options for a variable
-#cov.list_available_variables("lst_v061")
-
-# Step 3: Send off a single covariate query for Nigeria
-# query_result_day <- cov.query(    cov.cov("lst_v061", type = c("day", "night")),
-#                                   temporal_resolution = "Annual",
-#                                   spatial_resolution = "1km",   # 1km/5km or sometimes 500m etc
-#                                   temporal_summary = "mean",
-#                                   spatial_summary = "Data"  # Change this from "mean" to "Data"
-#                                   ) %>%
-#   cov.filter_date("2021", "2023") %>%     #To and from
-#   cov.clip(geo.countries(version="mapadmin_0_2022", "NGA")) %>% # Note the version name!
-#   cov.load_rasters_as_stack() # Load in rasters/or cov.load_rasters_as_stack() function to load rasterstack object
-
-# Getting my dynamic covariates
-# test, not a raster stack
-lst_day_1km <- cov.query(    cov.cov("lst_v061", type = c("day")),
-                                  temporal_resolution = "Monthly",
-                                  spatial_resolution = "1km",   # 1km/5km or sometimes 500m etc
-                                  temporal_summary = "mean",
-                                  spatial_summary = "Data"  # Change this from "mean" to "Data"
-) %>%
-  cov.filter_date("2021", "2023") %>%     #To and from
-  cov.clip(geo.countries(version="mapadmin_0_2022", "NGA")) %>% # Note the version name!
-  cov.load_rasters() # Load in rasters/or cov.load_rasters_as_stack() function to load rasterstack object
-#lst_day_1km %>%cov.pull_first_raster()
-
-month <- c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12")
-year <- 2020:2022
-
-names(lst_day_1km )
-
-
+load("covs_static.Rdata")
 ```
 
-
+Static and dynamic covariates combined
 ```{r}
-library(raster)
-library(terra)
-library(tidyverse)
-dir_path <- "/mnt/s3/stratification/CountryFolders/Nigeria"
-
-# Raster locations
-raster_dir <- paste0(dir_path,"/Common files/Covariates/1km/")
-# Raster files
-covariate.names <- list(
-  "accessibility_to_cities_2015_v1.0.tif",
-  "Aridity_Index_v2.Synoptic.Overall.Data.1km.Data.tif",
-  "distance_to_water.tif",
-  "SRTM_Elevation.Synoptic.Overall.Data.1km.mean.tif",
-  "EVI_v6.2018.Annual.mean.1km.Data.tif",
-  "LST_Day_v6.2018.Annual.mean.1km.Data.tif",
-  "LST_Night_v6.2018.Annual.mean.1km.Data.tif",
-  "PET_v2.Synoptic.Overall.Data.1km.Data.tif",
-  "SRTM_SlopePCT_Corrected.Synoptic.Overall.Data.1km.Data.tif",
-  "DMSP.F18_Stable_Lights_v4c.2013.Annual.Data.1km.Data.tif",
-  "TCB_v6.2018.Annual.mean.1km.Data.tif",
-  "TCW_v6.2018.Annual.mean.1km.Data.tif",
-  "TempSuitability.Pf.Index.1k.2010.global.tif",
-  "tree_fraction_any_percent.tif",
-  "HydroSHEDS_TWI.tif")
-
-# Number of covariates
-Ncovariates <- length(covariate.names)
-
-# Transformations to apply to 
-transformation.types <- c("Exponential",
-                          "Normal",
-                          "Exponential",
-                          "Exponential",
-                          "Normal",
-                          "Normal",
-                          "Normal",
-                          "Normal",
-                          "Exponential",
-                          "Exponential",
-                          "Normal",
-                          "Normal",
-                          "Normal",
-                          "Normal",
-                          "Normal"
-)
-
-# Match raster to transforms
-for (i in 1:Ncovariates) {
-   cat(i, covariate.names[[i]],transformation.types[i],"\n")
- }
-# Create empty list to file
-cov.list <- list()
-
-# Read raster, apply transformation, append to list
-for (k in 1:Ncovariates) {
-  
-  cat("Processing covariate:",covariate.names[[k]],"...\n")
-  cov.current <- raster(
-    paste0(
-      raster_dir,
-      covariate.names[[k]]))
-  # Step 1: Ensure both rasters are SpatRaster
-  cov.current <- rast(cov.current)  # Convert if cov.current is a RasterLayer
-  #buffer.image <- rast(buffer.image)  # Convert if buffer.image is a RasterLayer
-  
-  # Step 2: Make sure both rasters have the same CRS (coordinate reference system)
-  if (crs(cov.current) != crs(pop_u5)) {
-    cov.current <- project(cov.current, crs(pop_u5))  # Reproject cov.current to match buffer.image's CRS
-  }
-  
-  # Step 3: Crop or Extend
-  # If you want to crop cov.current to the extent of buffer.image
-  cov.current <- crop(pop_u5, cov.current)  # Crop to the extent of buffer.image
-  
-  # If you want to extend cov.current to match the extent of buffer.image
-  cov.current <- extend(cov.current, ext(pop_u5))  # Extend to the extent of buffer.image
-  
-  if (!prod(dim(cov.current)==dim(pop_u5))) 
-  {warning("Mismatched dimensions!\n")
-    cov.current <- resample(cov.current, pop_u5)
-    plot(cov.current)}
-  cov.current <- values(cov.current)[valid.pix]
-  
-  if (transformation.types[k]=="Normal") {
-    cov.current <- (cov.current-mean(cov.current,na.rm=T))/sd(cov.current,na.rm=T)
-  }
-  
-  if (transformation.types[k]=="Exponential") {
-    cov.current <- cov.current + min(
-      cov.current[cov.current>0 & cov.current!=Inf & 
-                    cov.current!=-Inf & !is.nan(cov.current)], na.rm=T) + 
-      abs(min(
-        cov.current[cov.current>0 & cov.current!=Inf & cov.current!=-Inf & 
-                      !is.nan(cov.current)],na.rm=T))
-    cov.current <- qnorm(pexp(cov.current,1/mean(cov.current,na.rm=T)))
-  }
-  
-  nas <- which(is.na(cov.current))
-  if (length(nas)>0) {
-    validp  <- which(!(is.na(cov.current) | cov.current==-Inf | cov.current==Inf))
-    vcoords <- valid.coords[validp,]
-    for (i in nas) {
-      nearestv <- which.min(
-        (vcoords[,1]-valid.coords[i,1])^2+(vcoords[,2]-valid.coords[i,2])^2)
-      cov.current[i] <- cov.current[validp[nearestv]]
-    }
-  }
-  
-  infs <- which(cov.current==Inf)
-  if (length(infs)>0) {
-    validp  <- which(!(cov.current==-Inf | cov.current==Inf))
-    vcoords <- valid.coords[validp,]
-    for (i in infs) {
-      nearestv <- which.min(
-        (vcoords[,1]-valid.coords[i,1])^2+(vcoords[,2]-valid.coords[i,2])^2)
-      cov.current[i] <- cov.current[validp[nearestv]]
-    }
-  }
-  
-  neginfs <- which(cov.current==-Inf)
-  if (length(neginfs)>0) {
-    validp  <- which(!(cov.current==-Inf))
-    vcoords <- valid.coords[validp,]
-    for (i in neginfs) {
-      nearestv <- which.min(
-        (vcoords[,1]-valid.coords[i,1])^2+(vcoords[,2]-valid.coords[i,2])^2)
-      cov.current[i] <- cov.current[validp[nearestv]]
-    }
-  }
-  # hist(cov.current)
-  cov.list[[k]] <- cov.current
-}
-
-# Turn list into a matrix
-covariates <- do.call(rbind,cov.list)
-
-# Truncate extreme values
-covariates[covariates > 5]  <- 5
-covariates[covariates < -5] <- -5
-covariates <- t(covariates)
+load("covs_dynamic.Rdata")
 ```
+
 
 The Gaussian process implementations we use below assume that the coordinates are on a plane - they don't account for the curvature of the earth (unlike INLA which is able to model GPs on a sphere). We therefore first need to ensure that the raster we use to define this computational setup is appropriately projected. For the block-circulant matrix approach, this is especially important since the computation relies on the compute locations being arranged in a regular gird. We therefore project our matrix to an appropriate projected coordinate reference system:
 
@@ -584,6 +387,7 @@ ggplot(itn_map_long)+
   theme_bw()
 ```
 
+
 ```{r ITN_use_matrix}
 library(raster)
 library(terra)
@@ -704,7 +508,7 @@ prev_surveys_mic <- prev_data %>%
    ylab("") +
    theme_minimal() +
    ggtitle("Prevalence surveys with PCR test",
-           subtitle="MIS-2020 0-5 years in Nigeria")
+           subtitle="MIS-2021 0-5 years in Nigeria")
 ```
 
 ```{r vis_prevalence_2}
@@ -741,7 +545,7 @@ prev_surveys_rdt <- prev_data %>%
    ylab("") +
    theme_minimal() +
    ggtitle("Prevalence surveys with RDT test",
-           subtitle="MIS-2020 for 0-5 years in Nigeria")
+           subtitle="MIS-2021 for 0-5 years in Nigeria")
  ggsave("~/epiwave.mapping/Prevalence_rdt.png")
 ```
 
@@ -876,7 +680,7 @@ To specify the model in greta, first we define the model hyperparameters with pr
 
 First we will define the hyperparameters and spatio-temporal process structure and for the spatio-temporal random effects epsilon. We provide two options: the block-circulant embedding approach, and the sparse GP approach, and we demonstrate how to set up objects for both.
 
-We can use the `epiwave.mapping::deifne_bcb_setup()` function to define the objects required for the block-circulant basis approach to simulating IID Guassian processes over space, and converting them to spatio-temporal Gaussian processes: 
+We can use the `epiwave.mapping::deifne_bcb_setup()` function to define the objects required for the block-circulant basis approach to simulating IID Gaussian processes over space, and converting them to spatio-temporal Gaussian processes: 
 
 ```{r define_bcb}
 library(epiwave.mapping)
@@ -1100,7 +904,7 @@ Here we use an arbitrary set of priors, that happen to be those used to simulate
 ```{r define_priors}
 # intercept and slope for fixed-effects terms on daily infection incidence
 alpha <- normal(log(1e-4), 1) #Have a think about this parameter
-beta <- normal(0, 1, dim = ncol(covariates))
+beta <- normal(0, 1, dim = ncol(covariates_static))
 
 beta_itn <- normal(0, 1, dim = ncol(ITN_temporal_cov), truncation = c(0,Inf))
 # fraction of all clinical cases reported in case counts
@@ -1118,7 +922,7 @@ Then we can define the deterministic mapping from these, through infection incid
 all_cells <- terra::cells(grid_raster)
 
 # extract the covariate design matrix (scale)
-X <- covariates
+X <- covariates_static
 
 # matrix-multiply with beta, and add alpha, to get the spatial fixed effects, ITN use effects
 fixef <- alpha + X %*% beta - ITN_temporal_cov %*% beta_itn
@@ -1138,6 +942,7 @@ timeperiod_new_infections <- daily_new_infections * timeperiod_days
 ```   
 Note that we can similarly simulate other objects like `timeperiod_new_infections` from the model priors and plot them as rasters to check the model and prior specification seems reasonable.
 
+
 Next we will compute the expected prevalence at our prevalence survey locations. We need to find the index to the rows in `timeperiod_new_infections` where the prevalence surveys were performed, and then apply the appropriate convolution on these to compute the expected prevalences at those times and places.
 
 ```{r}
@@ -1154,7 +959,7 @@ prevalence_sf <- st_as_sf(prev_surveys_rdt,
 
 
 # Print to check if it worked
-print(prevalence_sf)
+#print(prevalence_sf)
 
 # Check the CRS
 st_crs(prevalence_sf) == st_crs(grid_raster)  # Should return TRUE
@@ -1173,7 +978,7 @@ prev_cells <- terra::cellFromXY(grid_raster, prev_coords)
 prev_index <- match(prev_cells, all_cells)
 #prev_index <- prev_index[!is.na(prev_index)]
 # pull out the number of infections per day in these locations
-daily_new_infections_prev_locs <- daily_new_infections[prev_index, ]
+daily_new_infections_prev_locs <- daily_new_infections[!is.na(prev_index), ]
 
 #*********************************************
 #Add by OD
@@ -1207,7 +1012,7 @@ detectable_infections_daily_prev_locs <- convolve_matrix(
 
 # compute prevalence at these locations over time by dividing by population of
 # the locations where prevalence surveys were done
-population_prev_locs <- pop_all_cells[prev_index]
+population_prev_locs <- pop_all_cells[!is.na(prev_index)]
 prevalence_prev_locs <- sweep(detectable_infections_daily_prev_locs,
       1, population_prev_locs, FUN = "/")
 ```
@@ -1228,9 +1033,13 @@ q_star <- sum(q_daily(seq(0, q_max_days)))
     (1/365) * (1 - exp(-prevalence * 10))
   }
 #g <- data$surveillance_information$prev_inc_function
-clinical_case_incidence <- g(q_star * infection_incidence*all_s_ts)
+clinical_case_incidence <- g(q_star * infection_incidence)
+
 # multiplying by the reporting rate r gives us the reported clinical incidence rate
-reported_clinical_case_incidence <- r * clinical_case_incidence
+# We replace r by the treatment seeking rate
+# Now you can multiply
+#all_s_ts %*% clinical_case_incidence
+reported_clinical_case_incidence <-  r * clinical_case_incidence
 
 # to convert this to counts of reported clinical cases per pixel (before
 # temporal convolution), we compute and use gamma like in the above equations,
@@ -1331,18 +1140,18 @@ Now we define likelihoods for the two types of observation data. First we define
 ```{r prevalence_likelihood}
 # Now we find the timeperiod in which each survey was done, and extract the
 # corresponding prevalence estimates
-n_surveys <- nrow(data$epi_data$prevalence_surveys)
+n_surveys <- nrow(prev_surveys_rdt)
 idx <- cbind(
   seq_len(n_surveys), # rows
-  data$epi_data$prevalence_surveys$time # columns
+  prev_surveys_rdt$date #data$epi_data$prevalence_surveys$time # columns
 )
 
-prevalence_estimates <- prevalence_prev_locs[idx]
+prevalence_estimates <- prevalence_prev_locs[idx,]
 
 # now we can define a binomial likelihood over the data for this part of the
 # model
-positive <- data$epi_data$prevalence_surveys$n_positive
-tested <- data$epi_data$prevalence_surveys$n_sampled
+positive <- prev_surveys_rdt$n_positive #data$epi_data$prevalence_surveys$n_positive
+tested <- prev_surveys_rdt$n_sampled
 distribution(positive) <- binomial(tested, prevalence_estimates)
 ```
 
