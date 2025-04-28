@@ -186,45 +186,72 @@ An appealing third alternative in this case is to compute the full spatial GP fo
 
 We demonstrate the model with application to mapping the (simulated) infection incidence of malaria in Kenya from simulated clinical incidence and infection prevalence data. Using the `sim_data()` function from this package, we use a real grid of environmental covariates, but simulate the locations of health facilities, prevalence survey locations, and all datasets to which we will then fit the model.
 
+```{r}
+rm(list = ls())
+
+library(sf)
+library(terra)
+library(raster)
+
+pop_u5 <- raster("/mnt/s3/stratification/CountryFolders/Nigeria/Common files/Population/u5_grid3_1km_new.tif")
+# 1. Read shapefile (still in WGS84)
+shape <- st_read("/mnt/s3/stratification/CountryFolders/Nigeria/Common files/Shapefiles/NGA_LGAs.shp") %>%
+  st_make_valid()
+
+# 2. Transform shapefile to match raster CRS
+shape <- st_transform(shape, crs(pop_u5))
+
+# 3. Convert sf to terra SpatVector
+shape_vect <- vect(shape)
+
+# 4. Mask raster using boundary
+pop_masked <- mask(rast(pop_u5), shape_vect)
+
+# 5. Get valid cell indices where population > 0
+valid_cells <- which(!is.na(values(pop_masked)) & values(pop_masked) > 0)
+valid.pix     <- valid_cells
+# 6. Extract population values and coordinates
+population <- values(pop_u5)[valid_cells]
+raster_coords <- terra::xyFromCell(pop_u5, valid_cells)
+valid.coords <- raster_coords
+# Change projection to UTM
+new_crs <-"epsg:26332"  #"epsg:21036"
+pop_u5 <- terra::project(pop_masked, new_crs)
+
+```
 
 Define reference image, population and admin masks ----
 ```{r}
-library(raster)
-library(terra)
-library(sf)
-# Country-level shapefiles
-dir_path <- "/mnt/s3/stratification/CountryFolders/Nigeria"
-# Raster locations
-raster_dir <- paste0(dir_path,"/Common files/Covariates/1km/")
-
-# Country boundries
-shape <- st_read(file.path(dir_path,"Common files/Shapefiles/NGA_LGAs.shp")) 
-
-# Population under 5 rasterfile cropped and masked
-pop_u5 <- raster("/mnt/s3/stratification/CountryFolders/Nigeria/Common files/Population/u5_grid3_1km_new.tif")%>% 
-  crop(shape) %>% mask(shape)
-
-# Change projection to UTM
-new_crs <-"epsg:26332"  #"epsg:21036"
-pop_u5 <- terra::project(rast(pop_u5), new_crs)
-
-# Ensure that the 'shape' is a valid sf object
-# Make sure 'shape' is a valid Simple Features object (sf)
-# shape <- st_make_valid(shape)  # Fix invalid geometries
+# library(raster)
+# library(terra)
+# library(sf)
+# # Country-level shapefiles
+# dir_path <- "/mnt/s3/stratification/CountryFolders/Nigeria"
+# # Raster locations
+# raster_dir <- paste0(dir_path,"/Common files/Covariates/1km/")
 # 
-# # Perform the union operation after ensuring the geometries are valid
-# admin0 <- st_union(shape)
-# #plot(admin0)
-# NGA<-admin0
+# # Country boundries
+# shape <- st_read(file.path(dir_path,"Common files/Shapefiles/NGA_LGAs.shp")) 
+# 
+# # Population under 5 rasterfile cropped and masked
+# pop_u5 <- raster("/mnt/s3/stratification/CountryFolders/Nigeria/Common files/Population/u5_grid3_1km_new.tif")%>% 
+#   crop(shape) %>%
+#   mask(shape)
+# 
+# # Change projection to UTM
+# new_crs <-"epsg:26332"  #"epsg:21036"
+# pop_u5 <- terra::project(rast(pop_u5), new_crs)
+# 
+# 
+# # Create an index vector of each pixel, along with their coordinates
+# population   <- values(pop_u5)
+# valid.pix     <- which(!is.na(population) & population>0)
+#              
+# im.coords     <- xyFromCell(raster(pop_u5), valid.pix)
+# valid.coords      <- im.coords
 
-
-# Create an index vector of each pixel, along with their coordinates
-population   <- values(pop_u5)
-valid.pix     <- which(!is.na(population) & population>0)
-             
-im.coords     <- xyFromCell(pop_u5, valid.pix)
-valid.coords      <- im.coords
 ```
+
 ```{r }
 library(terra)
 # define a template raster representing our compute grid: 0 in land cells, NA
@@ -273,7 +300,7 @@ all_s_ts <- rast(all_s_ts)  # Convert if all_s_ts is a RasterLayer
   
 # Step 2: Make sure both rasters have the same CRS (coordinate reference system)
 if (crs(all_s_ts) != crs(pop_u5)) {
-  all_s_ts <- project(all_s_ts, crs(pop_u5))  # Reproject all_s_ts to match buffer.image's CRS
+  all_s_ts <- terra::project(all_s_ts, crs(pop_u5))  # Reproject all_s_ts to match buffer.image's CRS
 }
 
 # Step 3: Crop or Extend
@@ -344,10 +371,11 @@ if (length(neginfs)>0) {
 ```
 
 
-Read ITN use in LGA level
+Read and plot ITN use in LGA level
 ```{r ITN_use_plots}
 library(raster)
 library(terra)
+library(tidyverse)
 itn_stack <- stack(list.files("/mnt/s3/stratification/CountryFolders/Nigeria/Common files/Covariates/1km/Monthly/ITN/20210531_v1/", ".tif", full.names = TRUE))
 names(itn_stack) <- month.name[as.numeric(sub("ITN_use_1km_monthly_", "", names(itn_stack)))]
 # Select only layers with valid month names (January - December)
@@ -398,15 +426,19 @@ for (month_idx in 1:12) {
     cov_current <- raster(paste0("/mnt/s3/stratification/CountryFolders/Nigeria/Common files/Covariates/1km/Monthly/ITN/20210531_v1//ITN_use_1km_monthly_", month_idx, ".tif")) 
     cov_current <- rast(cov_current)  # Convert if cov_current is a RasterLayer
     if (crs(cov_current) != crs(pop_u5)) {
-      cov_current <- project(cov_current, crs(pop_u5))  
+      cov_current <- terra::project(cov_current, crs(pop_u5))  
     }
     cov_current <- crop(cov_current, pop_u5)  
-    cov_current <- extend(cov_current, ext(pop_u5))  # Extend to the extent of buffer.image
+    cov_current <- extend(cov_current, ext(pop_u5))  
     # Ensure matching dimensions
-    if (!prod(dim(cov_current) == dim(pop_u5))) {
-        stop("Mismatched dimensions!\n")
-      cov_current <- resample(cov_current, pop_u5)
-    }
+    # if (!all(dim(cov_current) == dim(pop_u5))) {
+    #     stop("Mismatched dimensions!\n")
+    #   cov_current <- resample(cov_current, pop_u5)
+    # }
+    if (!all(dim(cov_current) == dim(pop_u5))) {
+    message("Resampling due to dimension mismatch: ", paste(dim(cov_current), collapse = "x"), " vs ", paste(dim(pop_u5), collapse = "x"))
+    cov_current <- resample(cov_current, pop_u5)
+}
     # Extract valid pixels
     cov_current_values <- values(cov_current)[valid.pix]
 
@@ -439,29 +471,55 @@ for (month_idx in 1:12) {
 Plot the clinical case timeseries for all health facilities over each year:
 
 ```{r vis_clinical_cases_1}
+library(tidyverse)
 nga_inc_data <- read.csv("/mnt/efs/stratification/Nigeria/HBHI_2025/03_Additional_files_optional/Imputation/tgo_dhis2_imputed_aggregated.csv")%>%
-     arrange(date)
+  arrange(date) %>%
+  separate(date, into = c('monthname', 'year'), sep = " ") %>% 
+  mutate(month = factor(monthname, levels = c("Jan","Feb","Mar","Apr","May","Jun",
+                                              "Jul","Aug","Sep","Oct","Nov","Dec")),
+         month = as.numeric(month),
+         year = as.numeric(year)) 
 
-nga_inc_data$date <- as.Date(paste0("01-", nga_inc_data$date), format = "%d-%b %Y")
 
-# Filter out rows with NA values
-nga_inc_data_clean <- nga_inc_data[!is.na(nga_inc_data$date) & !is.na(nga_inc_data$positive), ]
+# ggplot(aes(
+#      x = month,
+#      y = positive,
+#      colour = adm2,
+#      group = adm2
+#    ), data = nga_inc_data) +
+#    facet_wrap(~year, nrow = 3) +  # Set the number of rows to 2 (or change this value as needed)
+#    geom_line(linewidth = 0.3) + 
+#    theme_minimal() +
+#    scale_colour_discrete(guide = "none") +
+#    scale_x_continuous(breaks = 1:12) +
+#    ggtitle("Clinical case timeseries 0-5 years in Nigeria")
+#  
+#  ggsave("~/epiwave.mapping/clinical_cases_timeseries_2021_2023.png")
 
-ggplot(aes(
-     x = month,
-     y = positive,
-     colour = adm2,
-     group = adm2
-   ), data = nga_inc_data_clean) +
-   facet_wrap(~year, nrow = 3) +  # Set the number of rows to 2 (or change this value as needed)
-   geom_line(linewidth = 0.3) + 
-   theme_minimal() +
-   scale_colour_discrete(guide = "none") +
-   scale_x_continuous(breaks = 1:12) +
-   ggtitle("Clinical case timeseries 0-5 years in Nigeria")
- 
- ggsave("~/epiwave.mapping/clinical_cases_timeseries_2021_2023.png")
+cases <- nga_inc_data 
+
+ggplot(
+  aes(
+    x = month,
+    y = cases$positive,
+    colour = adm2,
+    group = adm2
+  ),
+  data = cases) +
+  facet_wrap(~year) +
+  geom_line(
+    linewidth = 0.3
+  ) + 
+  theme_minimal() +
+  scale_colour_discrete(
+    guide = "none"
+  ) +
+  scale_x_continuous(breaks = 1:12) +
+  ggtitle("Clinical case timeseries")
+
+ggsave("~/epiwave.mapping/clinical_cases_timeseries.png")
 ```
+
 
 
 Plot the prevalence survey results at the prevalence survey locations:
@@ -650,7 +708,7 @@ prev_inc_plot <- tibble(prevalence = seq(0, 0.5, length.out = 100)) %>%
 ```
 
 Prevalence observed timeseries
-```{r vis_data_6}
+```{r vis_data_7}
 q_max_days <- 30
 q_star <- sum(q_daily(seq(0, q_max_days)))
 
@@ -908,11 +966,11 @@ beta <- normal(0, 1, dim = ncol(covariates_static))
 
 beta_itn <- normal(0, 1, dim = ncol(ITN_temporal_cov), truncation = c(0,Inf))
 # fraction of all clinical cases reported in case counts
-r <- beta(10, 5)
+#r <- beta(10, 5)
 
 prior_hist(alpha, "histogram of alpha")
 prior_hist(beta, "histogram of beta")
-prior_hist(r, "histogram of r")
+#prior_hist(r, "histogram of r")
 prior_hist(beta_itn, "histogram of beta_itn")
 ```
 
@@ -928,7 +986,7 @@ X <- covariates_static
 fixef <- alpha + X %*% beta - ITN_temporal_cov %*% beta_itn
 
 # add on epsilon, and convert to infection incidence
-eta <- sweep(epsilon, 1, fixef, FUN = "+")
+eta <- sweep(epsilon, 1, fixef[1:nrow(epsilon)], FUN = "+")
 infection_incidence <- ilogit(eta)
 
 # multiply by population and timeperiod to get the count of new infections per
@@ -969,31 +1027,37 @@ st_crs(prevalence_sf) == st_crs(grid_raster)  # Should return TRUE
 
 ```{r define_prevalence}
 # get the prevalence survey coordinates (already projected int he same CRS as the rasters)
+library(dplyr)
+prevalence_sf <- prevalence_sf %>% 
+  filter(!is.na(prevalence))
 prev_coords <- prevalence_sf %>%
   st_coordinates()
 
 # find an index to the cells in the full grid
-prev_cells <- terra::cellFromXY(grid_raster, prev_coords)
+prev_cells <- terra::cellFromXY(pop_u5, prev_coords)
 # get the index to rows in our compute objects
 prev_index <- match(prev_cells, all_cells)
 #prev_index <- prev_index[!is.na(prev_index)]
 # pull out the number of infections per day in these locations
-daily_new_infections_prev_locs <- daily_new_infections[!is.na(prev_index), ]
+#daily_new_infections_prev_locs <- daily_new_infections[!is.na(prev_index), ]
 
+# Fill in rows where match was successful
+valid <- prev_index[!is.na(prev_index)]
+daily_new_infections_prev_locs <- daily_new_infections[valid, ]
 #*********************************************
 #Add by OD
 # for each day post-infection this is the (entirely fake) probability of testing
   # positive on our hypothetical test, if tested that day. Hard-coded to be 0 for
   # negative times or beyond 30 days
-  max_infection_detectability <- 30
-  q_daily <- function(days) {
-    up <- plogis((days * 2) - 5)
-    down <- 1 - plogis(days / 2 - 10)
-    q <- up  * down
-    q[days < 0] <- 0
-    q[days > 30] <- 0
-    q
-  }
+max_infection_detectability <- 30
+q_daily <- function(days) {
+  up <- plogis((days * 2) - 5)
+  down <- 1 - plogis(days / 2 - 10)
+  q <- up  * down
+  q[days < 0] <- 0
+  q[days > 30] <- 0
+  q
+}
 #****************************************
 # now to do the convolution, we first need to translate the detectability
 # function from a daily timestep to our monthly timestep
@@ -1012,13 +1076,18 @@ detectable_infections_daily_prev_locs <- convolve_matrix(
 
 # compute prevalence at these locations over time by dividing by population of
 # the locations where prevalence surveys were done
-population_prev_locs <- pop_all_cells[!is.na(prev_index)]
-prevalence_prev_locs <- sweep(detectable_infections_daily_prev_locs,
-      1, population_prev_locs, FUN = "/")
+
+population_prev_locs <- pop_all_cells[valid]
+
+prevalence_prev_locs <- sweep(detectable_infections_daily_prev_locs, 1, population_prev_locs, FUN = "/")
+
 ```
 
 Now we model the expected clinical incidence at each pixel, accounting for the prevalence-incidence relationship, delays between infection and reporting, imperfect reporting rates, and aggregating the counts over health facility catchments.
-# We are going to add here the treatment seeking. Because it's not all infected individuals seek treatment
+
+We are going to add here the treatment seeking. Because it's not all infected individuals seek treatment.
+The matrix TS has 553593 rows and the clinical_case_incidence matrix has dim=553593x36.
+We need to expand s_ts across 36 columns so it matches clinical_case_incidence, then multiply.
 ```{r define_clinical_incidence}
 # first, we define gamma: the ratio of clinical cases to infections
 
@@ -1038,8 +1107,17 @@ clinical_case_incidence <- g(q_star * infection_incidence)
 # multiplying by the reporting rate r gives us the reported clinical incidence rate
 # We replace r by the treatment seeking rate
 # Now you can multiply
-#all_s_ts %*% clinical_case_incidence
-reported_clinical_case_incidence <-  r * clinical_case_incidence
+
+# convert the vector to a greta array
+# s_ts <- as_data(all_s_ts)  # greta array of shape (n)
+# s_ts_matrix <- s_ts %*% t(rep(1, 36))  # now 553593 × 36
+#reported_clinical_case_incidence <-  s_ts_matrix * clinical_case_incidence # r * clinical_case_incidence
+
+# alternative code, probably more computationally efficient
+reported_clinical_case_incidence <- sweep(clinical_case_incidence ,
+                                          1 ,
+                                          all_s_ts[1:nrow(epsilon)] ,
+                                          FUN = "*" )
 
 # to convert this to counts of reported clinical cases per pixel (before
 # temporal convolution), we compute and use gamma like in the above equations,
@@ -1090,86 +1168,96 @@ reported_clinical_cases_shifted <- convolve_matrix(reported_clinical_cases,
 
 
 This gives us the expected number of clinical cases reported in each
-timeperiod, in each pixel. Next we need to aggregate them at health facility
+timeperiod, in each pixel. Next we need to aggregate them at LGA
 level to link them to the available data.
 
-```{r health_facility_aggregation}
-# # First, we'll need to reproject the catchment model, and then extract all
-# # catchment information into a matrix
-# catchment_rast_raw <- data$surveillance_information$health_facilities$catchments_rast
-# catchment_rast <- terra::project(catchment_rast_raw, new_crs) 
-# catchment_weights <- terra::extract(catchment_rast, all_cells)
-# 
-# # after reprojecting, we will need to ensure that the weights sum to 1 across
-# # all rows(pixels), so that the weights are probabilities of attending each
-# # health facility. If they don't sum to 1, we'll be losing/adding cases in an
-# # unpredictable way
-# catchment_weight_sums <- rowSums(catchment_weights)
-# catchment_weights <- sweep(catchment_weights, 1, catchment_weight_sums, FUN = "/")
-# 
-# # now we just need a matrix multiplication to assign the reported cases in each
-# # pixel and time to health facility level, resulting in a matrix with rows
-# # giving health facilities and columns giving time periods
-# reported_clinical_cases_hf <- t(catchment_weights) %*% reported_clinical_cases_shifted
-```
+We don't want to use catchment fractions (weights) for each pixel. we are using data that is recorded at the LGA of residence. So for each pixel, instead of some fraction of cases from that pixel reporting in each of several 'clinics' (the fraction being the probability that a randomly selected case attends that clinic), you have the fraction of cases from that pixel that report in each LGA. Since we have the LGA of residence, we can just assume that fraction is 1 for the LGA that the pixel falls in, and 0 for all other LGAs. So the catchment weights matrix can just be 1s and 0s: 1 in matrix cells where the pixel corresponds to the LGA, and 0 where it doesn't. Then we can use the same matrix multiply to aggregate them.
 
-# As we are working on LGAs, the we do not take into account the catchments
-# Then, we define here how to aggregate at that level
 ```{r lga_aggregation}
-# First, we'll need to reproject the catchment model, and then extract all
-# catchment information into a matrix
-#catchment_rast_raw <- data$surveillance_information$health_facilities$catchments_rast
-#catchment_rast <- terra::project(catchment_rast_raw, new_crs) 
-catchment_weights <- terra::extract(reported_clinical_cases_shifted, all_cells,'mean')
+# define the number of pixels and number of LGAs based on data
+n_pixels <- length(all_cells)
+n_lgas <- length(unique(nga_inc_data$adm2))
 
-# after reprojecting, we will need to ensure that the weights sum to 1 across
-# all rows(pixels), so that the weights are probabilities of attending each
-# health facility. If they don't sum to 1, we'll be losing/adding cases in an
-# unpredictable way
-catchment_weight_sums <- rowSums(catchment_weights)
-catchment_weights <- sweep(catchment_weights, 1, catchment_weight_sums, FUN = "/")
+# a vector of the LGAs to which each pixel belongs
+pixel_lga_membership_vec <- sort(rep(seq_len(n_lgas), length.out = n_pixels))
 
-# now we just need a matrix multiplication to assign the reported cases in each
-# pixel and time to health facility level, resulting in a matrix with rows
-# giving health facilities and columns giving time periods
-reported_clinical_cases_hf <- t(catchment_weights) %*% reported_clinical_cases_shifted
+# make an n_pixels x n_lgas matrix of the LGA membership
+pixel_lga_membership_mat <- matrix(0, n_pixels, n_lgas)
+membership_index <- cbind(seq_len(n_pixels),
+                          pixel_lga_membership_vec)
+pixel_lga_membership_mat[membership_index] <- 1
+
+# check there is only a single 1 in each row (each pixel is only in one LGA)
+all(rowSums(pixel_lga_membership_mat) == 1)
+
+
+# test it on some fake data
+# n_times <- 5
+# reported_clinical_cases_shifted_test <- matrix(runif(n_pixels * n_times),
+#                                           n_pixels, n_times)
+
+# use the membership as the weights
+catchment_weights <- pixel_lga_membership_mat
+reported_clinical_cases_lga <- t(catchment_weights) %*% reported_clinical_cases_shifted
+
+# check this has the right dimensions
+n_times <- dim(daily_new_infections)[2]
+all(dim(reported_clinical_cases_lga) == c(n_lgas, n_times))
 ```
-
 
 Now we define likelihoods for the two types of observation data. First we define the likelihood for prevalence survey data by extracting the prevalence values from the modelled timeseries, at the times and locations where the surveys were performed.
 ```{r prevalence_likelihood}
 # Now we find the timeperiod in which each survey was done, and extract the
 # corresponding prevalence estimates
-n_surveys <- nrow(prev_surveys_rdt)
+prev_surveys_rdt_modif <- prev_surveys_rdt %>%
+  filter(!is.na(prevalence)) 
+prev_surveys_rdt_modif$cell_index <- prev_index
+
+validd <- !is.na(prev_surveys_rdt_modif$cell_index)
+prev_surveys_rdt_modif <- prev_surveys_rdt_modif[validd, ]
+
+n_surveys <- nrow(prev_surveys_rdt_modif)
 idx <- cbind(
   seq_len(n_surveys), # rows
-  prev_surveys_rdt$date #data$epi_data$prevalence_surveys$time # columns
+  prev_surveys_rdt_modif$month #data$epi_data$prevalence_surveys$time # columns
 )
 
-prevalence_estimates <- prevalence_prev_locs[idx,]
+
+prevalence_estimates <- prevalence_prev_locs[idx]
 
 # now we can define a binomial likelihood over the data for this part of the
 # model
-positive <- prev_surveys_rdt$n_positive #data$epi_data$prevalence_surveys$n_positive
-tested <- prev_surveys_rdt$n_sampled
-distribution(positive) <- binomial(tested, prevalence_estimates)
+positive <- prev_surveys_rdt_modif$n_positive #data$epi_data$prevalence_surveys$n_positive
+#positive<-positive[!is.na(positive)][1:length(valid)]
+tested <- prev_surveys_rdt_modif$n_sampled
+#tested <- tested[!is.na(tested)][1:length(valid)]
+
+pos <- as_data(positive)
+tes <- as_data(tested)
+# Binomial likelihood
+distribution(pos) <- binomial(tes, prevalence_estimates)
 ```
 
 Now we add the likelihood for the clinical cases reported at health facility level, accounting for missingness of data in these timeseries.
 ```{r clinical_incidence_likelihood}
 # find the non-missing data
-valid_idx <- !is.na(data$epi_data$clinical_cases$cases)
+valid_idx <- !is.na(nga_inc_data$raw_positive)#!is.na(data$epi_data$clinical_cases$cases)
 
 # pull out these places, times, and cases
-cases_valid <- data$epi_data$clinical_cases[valid_idx, ]
-cases_observed <- cases_valid$cases
+cases_valid <- nga_inc_data[valid_idx,]#data$epi_data$clinical_cases[valid_idx, ]
+cases_observed <- cases_valid$raw_positive
+
+adm2_levels <- unique(nga_inc_data$adm2)
+adm2_index <- match(cases_valid$adm2, adm2_levels)
+month_index <- as.integer(cases_valid$month)
 
 # extract the corresponding estimates of cases
-cases_extract_index <- cbind(cases_valid$health_facility, cases_valid$time)
-cases_expected <- reported_clinical_cases_hf[cases_extract_index]
+cases_extract_index <- cbind(adm2_index, month_index)
+cases_expected <- reported_clinical_cases[cases_extract_index]#reported_clinical_cases_hf[cases_extract_index]
 
-# define the poisson observation model
-distribution(cases_observed) <- poisson(cases_expected)
+
+y_obs <- cases_observed
+distribution(y_obs) <- poisson(cases_expected)
 ```
 
 ### Model fitting and prediction
@@ -1182,28 +1270,26 @@ In general, it would be a good idea to use calculate to simulate some of these q
 # list only the quantities/parameters we want to trace the posteriors for in the
 # first instance. We can always recompute other quantities later, so keep this
 # to the hyperparameters.
-m <- model(
-  alpha, beta,
-  r,
-  phi, theta, sigma
-)
+m <- model(alpha, beta, beta_itn, phi, theta, sigma)
 
 # the model has trouble initialising when the infection incidence is high
 # (because the number of people detectable in the prevalence surveys can exceed
 # the population), so initialise it to be low
 
 # # later: work out how to cap it without ruining the gradients
+#library(reprex)
+#reprex({
 n_chains <- 4
 inits <- replicate(n_chains,
-                   initials(
+                   greta::initials(
                      alpha = runif(1, -10, -9)
                    ),
                    simplify = FALSE)
 
-draws <- mcmc(m,
+draws <- greta::mcmc(m,
               chains = n_chains,
               initial_values = inits)
-
+#})
 r_hats <- coda::gelman.diag(draws, autoburnin = FALSE, multivariate = FALSE)
 ```
 
